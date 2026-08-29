@@ -1,6 +1,6 @@
 #pragma once
 #include <string>
-#include <nlohmann/json.hpp>
+#include "fluxerpp/nlohmann/json.hpp"
 #include "FluxerConfig.h"
 
 namespace fluxerpp {

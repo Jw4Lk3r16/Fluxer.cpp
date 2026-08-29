@@ -4,11 +4,8 @@ project(FluxerPP LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Dependencies
 find_package(CURL REQUIRED)
-find_package(nlohmann_json REQUIRED)
 
-# Library: fluxerpp
 add_library(fluxerpp
     src/FluxerClient.cpp
     src/RestClient.cpp
@@ -17,8 +14,7 @@ add_library(fluxerpp
 )
 
 target_include_directories(fluxerpp PUBLIC include)
-target_link_libraries(fluxerpp PRIVATE CURL::CURL nlohmann_json::nlohmann_json)
+target_link_libraries(fluxerpp PRIVATE ${CURL_LIBRARIES})
 
-# Example bot
 add_executable(ping_bot examples/ping_bot.cpp)
-target_link_libraries(ping_bot PRIVATE fluxerpp CURL::CURL nlohmann_json::nlohmann_json)
+target_link_libraries(ping_bot PRIVATE fluxerpp ${CURL_LIBRARIES})

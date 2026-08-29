@@ -2,6 +2,7 @@
 #include "RestClient.h"
 #include "GatewayClient.h"
 #include "FluxerConfig.h"
+#include <fluxerpp/nlohmann/json.hpp>
 
 namespace fluxerpp {
 

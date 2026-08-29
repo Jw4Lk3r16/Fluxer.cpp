@@ -1,4 +1,4 @@
-#include "fluxerpp/FluxerClient.h"
+#include "../include/fluxerpp/FluxerClient.h"
 
 namespace fluxerpp {
 
