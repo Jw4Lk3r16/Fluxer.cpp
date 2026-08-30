@@ -1,14 +1,20 @@
 #include <iostream>
 #include <fluxerpp/FluxerClient.h>
+#include <fluxerpp/env.h>
 
 int main() {
-    fluxerpp::FluxerConfig cfg;
-    cfg.token = std::getenv("FLUXER_BOT_TOKEN");
+    // Load .env file
+    fluxerpp::load_env(".env");
 
-    if (!cfg.token.size()) {
-        std::cerr << "Missing FLUXER_BOT_TOKEN environment variable\n";
+    fluxerpp::FluxerConfig cfg;
+
+    const char* token = std::getenv("FLUXER_BOT_TOKEN");
+    if (!token || std::string(token).empty()) {
+        std::cerr << "Missing FLUXER_BOT_TOKEN in .env or environment\n";
         return 1;
     }
+
+    cfg.token = token;
 
     fluxerpp::FluxerClient client(cfg);
 
@@ -19,6 +25,9 @@ int main() {
     catch (const std::exception& e) {
         std::cerr << "REST error: " << e.what() << "\n";
     }
+
+    std::cout << "Press Enter to exit...";
+    std::cin.get();
 
     return 0;
 }

@@ -1,17 +1,18 @@
 #pragma once
-#include "FluxerConfig.h"
+#include <string>
 
 namespace fluxerpp {
 
 class GatewayClient {
 public:
-    GatewayClient(const FluxerConfig& cfg);
 
+    std::string token;
+
+    GatewayClient(const std::string& token);
     void connect();
-    void disconnect();
 
 private:
-    FluxerConfig config;
+
 };
 
-} // namespace fluxerpp
+}
