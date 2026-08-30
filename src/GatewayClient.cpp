@@ -17,11 +17,18 @@ static int callback_gateway(struct lws *wsi,
     switch (reason) {
 
     case LWS_CALLBACK_CLIENT_RECEIVE: {
+        std::cout << "[Gateway] RECV RAW: " << std::string((char*)in, len) << "\n";
+
         auto data = nlohmann::json::parse(std::string((char*)in, len));
+
+        if (data["op"] != 10) {
+            std::cout << "[Gateway] OP: " << data["op"] << "\n";
+        }
 
         if (data["op"] == 10) { // HELLO
             heartbeat_interval = data["d"]["heartbeat_interval"];
             last_heartbeat = std::chrono::steady_clock::now();
+            std::cout << "[Gateway] Sending IDENTIFY\n";
 
             GatewayClient* client =
                 (GatewayClient*)lws_context_user(lws_get_context(wsi));
@@ -59,6 +66,8 @@ static int callback_gateway(struct lws *wsi,
             if (ms >= heartbeat_interval) {
                 last_heartbeat = now;
 
+                std::cout << "[Gateway] Sent heartbeat\n";
+
                 nlohmann::json heartbeat = {
                     {"op", 1},
                     {"d", nullptr}
@@ -75,6 +84,14 @@ static int callback_gateway(struct lws *wsi,
         }
         break;
     }
+
+    case LWS_CALLBACK_CLIENT_CLOSED:
+        std::cout << "[Gateway] Connection closed by server\n";
+        break;
+
+    case LWS_CALLBACK_CLIENT_CONNECTION_ERROR:
+        std::cout << "[Gateway] Connection error\n";
+        break;
 
     default:
         break;
