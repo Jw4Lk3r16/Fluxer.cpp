@@ -13,6 +13,7 @@ public:
     nlohmann::json post(const std::string& path, const nlohmann::json& body);
     nlohmann::json patch(const std::string& path, const nlohmann::json& body);
     nlohmann::json del(const std::string& path);
+    std::uint64_t user_id() const { return 0; }
 
 private:
     FluxerConfig config;
