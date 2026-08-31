@@ -5,16 +5,15 @@
 #include <optional>
 #include <memory>
 
+#include "fluxerpp/models/User.h"
+#include "fluxerpp/models/Embed.h"
+#include "fluxerpp/models/Reaction.h"
+#include "fluxerpp/models/Attachment.h"
+#include "fluxerpp/models/PartialEmoji.h"
+#include "fluxerpp/models/File.h"
+#include "fluxerpp/models/Channel.h"
+#include "fluxerpp/models/Guild.h"
 #include "fluxerpp/util/Json.h"
-#include "models/Placeholders.h"
-// #include "User.h"
-// #include "Embed.h"
-// #include "Reaction.h"
-// #include "Attachment.h"
-// #include "PartialEmoji.h"
-// #include "File.h"
-// #include "Channel.h"
-// #include "Guild.h"
 
 namespace fluxerpp {
 

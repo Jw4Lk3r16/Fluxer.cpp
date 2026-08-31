@@ -1,4 +1,4 @@
-#include "models/Message.h"
+#include "fluxerpp/models/Message.h"
 #include "fluxerpp/RestClient.h"
 #include "fluxerpp/util/Json.h"
 
