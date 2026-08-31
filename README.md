@@ -11,10 +11,21 @@ fluxerpp/
 │   ├── GatewayClient.h
 │   ├── EventDispatcher.h
 │   ├── models/
-│   │   ├── Message.h
-│   │   ├── Channel.h
-│   │   ├── User.h
-│   │   └── Guild.h
+│   │   ├─ Message.h
+│   │   ├─ User.h
+│   │   ├─ Embed.h
+│   │   ├─ Reaction.h
+│   │   ├─ Attachment.h
+│   │   ├─ PartialEmoji.h
+│   │   ├─ File.h
+│   │   ├─ Channel.h
+│   │   ├─ Guild.h
+│   │   ├─ Profile.h
+│   │   ├─ Role.h
+│   │   ├─ Member.h
+│   │   ├─ Voice.h
+│   │   ├─ Webhook.h
+│   │   └─ __init__.h
 │   └── util/
 │       ├── Json.h
 │       └── Logger.h
@@ -25,6 +36,23 @@ fluxerpp/
 │   ├── GatewayClient.cpp
 │   ├── EventDispatcher.cpp
 │   ├── models/
+│   │   ├─ Message.cpp
+│   │   ├─ User.cpp
+│   │   ├─ Embed.cpp
+│   │   ├─ Reaction.cpp
+│   │   ├─ Attachment.cpp
+│   │   ├─ PartialEmoji.cpp
+│   │   ├─ File.cpp
+│   │   ├─ Channel.cpp
+│   │   ├─ Guild.cpp
+│   │   ├─ Profile.cpp
+│   │   ├─ Role.cpp
+│   │   ├─ Member.cpp
+│   │   ├─ Voice.cpp
+│   │   ├─ Webhook.cpp
+│   │   └─ __init__.cpp
+│   │    
+│   │
 │   └── util/
 │
 ├── examples/

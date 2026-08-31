@@ -1,81 +1,30 @@
-// send_message_winhttp.cpp
-#include <windows.h>
-#include <winhttp.h>
-#include <string>
 #include <iostream>
-#include <nlohmann/json.hpp>
-#pragma comment(lib, "winhttp.lib")
+#include "fluxerpp/FluxerClient.h"
+#include "fluxerpp/util/Json.h"
 
-bool send_message_winhttp(const std::string& token, const std::string& channel_id, const std::string& content) {
-    nlohmann::json body = { {"content", content} };
-    std::string bodyStr = body.dump(); // exact UTF-8 bytes
+// Simple .env loader (see below)
+std::string load_env(const std::string& key);
 
-    HINTERNET hSession = WinHttpOpen(L"PingBot/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!hSession) { std::cerr << "WinHttpOpen failed\n"; return false; }
-
-    HINTERNET hConnect = WinHttpConnect(hSession, L"api.fluxer.app", INTERNET_DEFAULT_HTTPS_PORT, 0);
-    if (!hConnect) { WinHttpCloseHandle(hSession); std::cerr << "WinHttpConnect failed\n"; return false; }
-
-    std::string path = "/api/v1/channels/" + channel_id + "/messages";
-
-    int wlen = MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, nullptr, 0);
-    std::wstring wpath(wlen, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, &wpath[0], wlen);
-
-    HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"POST", wpath.c_str(), NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
-    if (!hRequest) { WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession); std::cerr << "WinHttpOpenRequest failed\n"; return false; }
-
-    std::string headers = "Content-Type: application/json\r\nAuthorization: Bot " + token + "\r\n";
-    int hwlen = MultiByteToWideChar(CP_UTF8, 0, headers.c_str(), -1, nullptr, 0);
-    std::wstring wheaders(hwlen, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, headers.c_str(), -1, &wheaders[0], hwlen);
-
-    BOOL sent = WinHttpSendRequest(
-        hRequest,
-        wheaders.c_str(),
-        (DWORD)(wheaders.size() - 1),
-        (LPVOID)bodyStr.c_str(),
-        (DWORD)bodyStr.size(),
-        (DWORD)bodyStr.size(),
-        0
-    );
-
-    if (!sent || !WinHttpReceiveResponse(hRequest, NULL)) {
-        std::cerr << "WinHttpSendRequest/ReceiveResponse failed\n";
-        WinHttpCloseHandle(hRequest);
-        WinHttpCloseHandle(hConnect);
-        WinHttpCloseHandle(hSession);
-        return false;
-    }
-
-    DWORD status = 0; DWORD statusSize = sizeof(status);
-    WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusSize, WINHTTP_NO_HEADER_INDEX);
-
-    std::string response;
-    DWORD bytesAvailable = 0;
-    while (WinHttpQueryDataAvailable(hRequest, &bytesAvailable) && bytesAvailable > 0) {
-        std::string chunk(bytesAvailable, '\0');
-        DWORD bytesRead = 0;
-        if (WinHttpReadData(hRequest, &chunk[0], bytesAvailable, &bytesRead) && bytesRead > 0) {
-            chunk.resize(bytesRead);
-            response += chunk;
-        } else break;
-    }
-
-    std::cout << "HTTP status: " << status << "\n";
-    std::cout << "Response body: " << response << "\n";
-
-    WinHttpCloseHandle(hRequest);
-    WinHttpCloseHandle(hConnect);
-    WinHttpCloseHandle(hSession);
-    return (status >= 200 && status < 300);
-}
-
-// Example main to call it
 int main() {
-    const std::string token = std::getenv("FLUXER_BOT_TOKEN") ? std::getenv("FLUXER_BOT_TOKEN") : "";
-    const std::string channel = "1538095086615658496";
-    if (token.empty()) { std::cerr << "Set FLUXER_BOT_TOKEN\n"; return 1; }
-    bool ok = send_message_winhttp(token, channel, "Hello, World");
-    return ok ? 0 : 1;
+    // Load token from .env
+    std::string token = load_env("FLUXER_BOT_TOKEN");
+    if (token.empty()) {
+        std::cerr << "[Fluxer++] ERROR: TOKEN not found in .env" << std::endl;
+        return 1;
+    }
+
+    fluxerpp::FluxerClient client(token);
+
+    client.on_ready([&]() {
+        std::cout << "[Fluxer++] Gateway READY — sending alive message" << std::endl;
+
+        std::uint64_t channel_id = 123456789012345678; // replace with your channel ID
+
+        client.rest().send_message(channel_id, {
+            {"content", "I am alive"}
+        });
+    });
+
+    client.run();
+    return 0;
 }
