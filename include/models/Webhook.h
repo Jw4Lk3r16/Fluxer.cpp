@@ -1,4 +1,4 @@
 #pragma once
 namespace fluxerpp { namespace models {
-class Channel {};
+class Webhook {};
 } }

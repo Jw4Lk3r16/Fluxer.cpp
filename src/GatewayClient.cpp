@@ -58,6 +58,22 @@ static std::string build_resume(const std::string& token, const std::string& ses
     return resume.dump();
 }
 
+void GatewayClient::on_ready(const std::function<void()>& cb) {
+    ready_callbacks.push_back(cb);
+}
+
+void GatewayClient::on_message_create(const std::function<void(const nlohmann::json&)>& cb) {
+    message_callbacks.push_back(cb);
+}
+
+void GatewayClient::dispatch_ready() {
+    for (auto& cb : ready_callbacks) cb();
+}
+
+void GatewayClient::dispatch_message_create(const nlohmann::json& data) {
+    for (auto& cb : message_callbacks) cb(data);
+}
+
 void GatewayClient::connect() {
     // We'll allow reconnect attempts on non-normal closes
     const int maxReconnectAttempts = 6;
@@ -326,16 +342,22 @@ void GatewayClient::connect() {
                     std::cout << "[Gateway] DISPATCH: " << t << "\n";
 
                     if (t == "READY") {
-                        // Save session_id for resume
                         try {
                             session_id = data["d"].value("session_id", session_id);
                         } catch (...) {}
                         std::cout << "[Gateway] READY received; session_id=" << session_id << "\n";
+
+                        dispatch_ready();
+
                     } else if (t == "GUILD_CREATE") {
                         std::cout << "[Gateway] GUILD_CREATE received\n";
+
                     } else if (t == "MESSAGE_CREATE") {
                         std::cout << "[Gateway] MESSAGE_CREATE received\n";
+
+                        dispatch_message_create(data["d"]);
                     }
+
                     // Add more event handling here
                 } else if (op == 1) { // Server heartbeat request
                     // Respond immediately

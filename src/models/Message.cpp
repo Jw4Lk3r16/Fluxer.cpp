@@ -1,6 +1,6 @@
-#include "fluxerpp/models/Message.hpp"
-#include "fluxerpp/RestClient.hpp"
-#include "fluxerpp/util/Json.hpp"
+#include "models/Message.h"
+#include "fluxerpp/RestClient.h"
+#include "fluxerpp/util/Json.h"
 
 namespace fluxerpp {
 namespace models {
