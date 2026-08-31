@@ -6,14 +6,15 @@
 #include <memory>
 
 #include "fluxerpp/util/Json.h"
-#include "User.h"
-#include "Embed.h"
-#include "Reaction.h"
-#include "Attachment.h"
-#include "PartialEmoji.h"
-#include "File.h"
-#include "Channel.h"
-#include "Guild.h"
+#include "models/Placeholders.h"
+// #include "User.h"
+// #include "Embed.h"
+// #include "Reaction.h"
+// #include "Attachment.h"
+// #include "PartialEmoji.h"
+// #include "File.h"
+// #include "Channel.h"
+// #include "Guild.h"
 
 namespace fluxerpp {
 
