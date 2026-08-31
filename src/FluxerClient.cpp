@@ -9,6 +9,10 @@ RestClient& FluxerClient::api() {
     return rest;
 }
 
+GatewayClient& FluxerClient::gateway() {
+    return gate;
+}
+
 void FluxerClient::login() {
     gate.connect();
 }

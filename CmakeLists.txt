@@ -1,20 +1,33 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.20)
 project(FluxerPP LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+include_directories(${CMAKE_SOURCE_DIR}/include)
 
-find_package(CURL REQUIRED)
-
+# Fluxer++ library
 add_library(fluxerpp
     src/FluxerClient.cpp
     src/RestClient.cpp
     src/GatewayClient.cpp
     src/EventDispatcher.cpp
+    src/winhttp_send.cpp
 )
 
-target_include_directories(fluxerpp PUBLIC include)
-target_link_libraries(fluxerpp PRIVATE ${CURL_LIBRARIES})
+target_link_libraries(fluxerpp
+    winhttp
+    ws2_32
+    curl
+)
 
-add_executable(ping_bot examples/ping_bot.cpp)
-target_link_libraries(ping_bot PRIVATE fluxerpp ${CURL_LIBRARIES})
+# ping_bot example
+add_executable(ping_bot
+    examples/ping_bot.cpp
+)
+
+target_link_libraries(ping_bot
+    fluxerpp
+    winhttp
+    ws2_32
+    curl
+)

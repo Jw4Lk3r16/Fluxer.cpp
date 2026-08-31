@@ -325,14 +325,17 @@ Reaction Message::_add_reaction(const Json& /*data*/,
                                 std::uint64_t user_id) {
     // find existing
     for (auto& reaction : reactions) {
-        if (reaction.emoji == emoji) {
+        if (reaction.emoji == emoji.to_string()) {
             reaction.count += 1;
+
             if (rest_ && user_id == rest_->user_id()) {
                 reaction.me = true;
             }
+
             return reaction;
         }
     }
+
 
     // new reaction
     Reaction reaction;
@@ -351,16 +354,20 @@ Reaction Message::_remove_reaction(const Json& /*data*/,
                                    std::uint64_t user_id) {
     for (std::size_t i = 0; i < reactions.size(); ++i) {
         auto& reaction = reactions[i];
-        if (reaction.emoji == emoji) {
+
+        if (reaction.emoji == emoji.to_string()) {
             reaction.count -= 1;
+
             if (rest_ && user_id == rest_->user_id()) {
                 reaction.me = false;
             }
+
             if (reaction.count <= 0) {
                 Reaction removed = reaction;
                 reactions.erase(reactions.begin() + i);
                 return removed;
             }
+
             return reaction;
         }
     }
@@ -378,7 +385,7 @@ void Message::_cache_guild(Guild* g) {
 // --- clear emoji internal ---
 std::optional<Reaction> Message::_clear_emoji(const PartialEmoji& emoji) {
     for (std::size_t i = 0; i < reactions.size(); ++i) {
-        if (reactions[i].emoji == emoji) {
+        if (reactions[i].emoji == emoji.to_string()) {
             Reaction removed = reactions[i];
             reactions.erase(reactions.begin() + i);
             return removed;

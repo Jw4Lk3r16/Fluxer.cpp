@@ -1,0 +1,5 @@
+{
+    "cmake.useCMakePresets": "always",
+    "cmake.configurePreset": "ucrt64",
+    "cmake.buildPreset": "ucrt64-build"
+}
