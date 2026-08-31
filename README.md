@@ -5,30 +5,31 @@
 ```
 fluxerpp/
 │
-├── include/fluxerpp/
+├── include/
 │   ├── FluxerClient.h
 │   ├── RestClient.h
 │   ├── GatewayClient.h
 │   ├── EventDispatcher.h
-│   ├── models/
-│   │   ├─ Message.h
-│   │   ├─ User.h
-│   │   ├─ Embed.h
-│   │   ├─ Reaction.h
-│   │   ├─ Attachment.h
-│   │   ├─ PartialEmoji.h
-│   │   ├─ File.h
-│   │   ├─ Channel.h
-│   │   ├─ Guild.h
-│   │   ├─ Profile.h
-│   │   ├─ Role.h
-│   │   ├─ Member.h
-│   │   ├─ Voice.h
-│   │   ├─ Webhook.h
-│   │   └─ __init__.h
-│   └── util/
-│       ├── Json.h
-│       └── Logger.h
+│   └─── fluxerpp/
+│       ├── models/
+│       │   ├─ Message.h
+│       │   ├─ User.h
+│       │   ├─ Embed.h
+│       │   ├─ Reaction.h
+│       │   ├─ Attachment.h
+│       │   ├─ PartialEmoji.h
+│       │   ├─ File.h
+│       │   ├─ Channel.h
+│       │   ├─ Guild.h
+│       │   ├─ Profile.h
+│       │   ├─ Role.h
+│       │   ├─ Member.h
+│       │   ├─ Voice.h
+│       │   ├─ Webhook.h
+│       │   └─ __init__.h
+│       └── util/
+│           ├── Json.h
+│           └── Logger.h
 │
 ├── src/
 │   ├── FluxerClient.cpp
