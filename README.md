@@ -185,6 +185,20 @@ Each model includes:
 - Safe accessors  
 
 ---
+## Future packaging
+
+| Packaging Method | Best For |
+| --- | --- |
+| Precompiled DLL + headers | Most users |
+| Static library | Performance bots |
+| CMake package | Serious C++ devs |
+| vcpkg port | Windows/Linux/Mac |
+| Conan package | Enterprise users |
+| MSYS2 package | UCRT64 users |
+| Single‑header | Beginners |
+| NuGet | Visual Studio users |
+
+---
 
 ## 📜 Logging  
 Fluxer++ includes a lightweight logger:
