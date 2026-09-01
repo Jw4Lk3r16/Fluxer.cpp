@@ -1,7 +1,23 @@
 # Fluxer++
 **Fluxer++** is a native **C++ SDK** for building fast, reliable Fluxer bots. It provides a modern REST client, real‑time gateway handling, type‑safe models, and an event‑driven architecture designed for high‑performance applications on the Fluxer platform.
 
-## Project Structure
+Fluxer++ is designed for developers who want full control, zero overhead, and maximum performance when interacting with the Fluxer API. The SDK is lightweight, modular, and built with modern C++20 standards.
+
+---
+
+## ✨ Features  
+- **High‑performance C++ core** — optimized for speed and low memory overhead  
+- **Event‑driven gateway** — register callbacks for ready, message events, reactions, and more  
+- **Modern REST client** — simple JSON‑based request/response handling  
+- **Type‑safe models** — Message, User, Channel, Guild, Role, Member, etc.  
+- **Modular architecture** — clean separation of gateway, REST, events, and models  
+- **Easy integration** — drop‑in headers and CMake support  
+- **UCRT64‑compatible** — built with MSYS2 UCRT64 toolchain  
+- **Examples included** — ping bot, echo bot, and minimal gateway usage  
+
+---
+
+## 📁 Project Structure  
 ```
 fluxerpp/
 │
@@ -10,7 +26,7 @@ fluxerpp/
 │   ├── RestClient.h
 │   ├── GatewayClient.h
 │   ├── EventDispatcher.h
-│   └─── fluxerpp/
+│   └── fluxerpp/
 │       ├── models/
 │       │   ├─ Message.h
 │       │   ├─ User.h
@@ -52,9 +68,6 @@ fluxerpp/
 │   │   ├─ Voice.cpp
 │   │   ├─ Webhook.cpp
 │   │   └─ __init__.cpp
-│   │    
-│   │
-│   └── util/
 │
 ├── examples/
 │   ├── ping_bot.cpp
@@ -62,3 +75,160 @@ fluxerpp/
 │
 └── CMakeLists.txt
 ```
+
+---
+
+## 🔧 Installation  
+Fluxer++ is currently built using **UCRT64** (MSYS2).  
+Precompiled binaries will be available soon.
+
+### Clone the repository  
+```
+git clone https://github.com/Jw4Lk3r16/Fluxer.cpp
+```
+
+### Build with CMake  
+```
+mkdir build
+cd build
+cmake ..
+cmake --build .
+```
+
+---
+
+## 🚀 Getting Started  
+### Minimal Bot Example  
+```cpp
+#include "fluxerpp/FluxerClient.h"
+
+int main() {
+    fluxerpp::FluxerConfig cfg;
+    cfg.token = "YOUR_TOKEN";
+
+    fluxerpp::FluxerClient client(cfg);
+
+    client.gate.on_ready([&]() {
+        std::cout << "Bot is online!\n";
+    });
+
+    client.login();
+}
+```
+
+---
+
+## 🌐 REST API Usage  
+Fluxer++ exposes a simple JSON‑based REST interface:
+
+```cpp
+client.api().send_message(channel_id, {
+    {"content", "Hello from Fluxer++!"}
+});
+```
+
+Supported operations include:
+
+- Sending messages  
+- Editing messages  
+- Deleting messages  
+- Managing channels  
+- Managing guilds  
+- Webhooks  
+- File uploads  
+
+---
+
+## 🔌 Gateway & Events  
+Fluxer++ uses an event dispatcher to handle gateway events:
+
+### Registering events  
+```cpp
+client.gate.on_message_create([&](const fluxerpp::Message& msg) {
+    std::cout << "Received: " << msg.content << "\n";
+});
+```
+
+Available events include:
+
+- `on_ready`  
+- `on_message_create`  
+- `on_message_update`  
+- `on_message_delete`  
+- `on_reaction_add`  
+- `on_reaction_remove`  
+- `on_member_join`  
+- `on_member_leave`  
+- `on_typing_start`  
+- and more…
+
+---
+
+## 🧱 Models  
+Fluxer++ provides strongly‑typed models for all major Fluxer objects:
+
+- **Message** — content, embeds, attachments  
+- **User** — username, avatar, flags  
+- **Channel** — type, permissions  
+- **Guild** — roles, members, settings  
+- **Role** — permissions, color  
+- **Member** — user + guild metadata  
+- **Embed** — title, description, fields  
+- **Webhook** — execute, modify, delete  
+- **File** — uploadable binary data  
+
+Each model includes:
+
+- JSON parsing  
+- JSON serialization  
+- Utility helpers  
+- Safe accessors  
+
+---
+
+## 📜 Logging  
+Fluxer++ includes a lightweight logger:
+
+```cpp
+fluxerpp::Logger::info("Gateway connected");
+fluxerpp::Logger::error("Failed to parse JSON");
+```
+
+Log levels:
+
+- Info  
+- Warning  
+- Error  
+- Debug  
+
+---
+
+## ⚠️ Error Handling  
+REST and gateway operations return structured error objects:
+
+```cpp
+auto res = client.api().send_message(...);
+
+if (!res.ok()) {
+    std::cerr << res.error().message << "\n";
+}
+```
+
+---
+
+## 🛠️ Contributing  
+Contributions are welcome!  
+You can help by:
+
+- Improving documentation  
+- Adding more examples  
+- Implementing additional gateway events  
+- Enhancing model coverage  
+- Optimizing performance  
+
+Open a pull request or create an issue on GitHub.
+
+---
+
+## 📄 License  
+Fluxer++ is licensed under MIT.
