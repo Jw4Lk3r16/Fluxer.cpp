@@ -213,6 +213,12 @@ if (!res.ok()) {
     std::cerr << res.error().message << "\n";
 }
 ```
+---
+## ⚠️ Bottles Necks
+
+**This SDK only supports windows** at the moment but in the near future **we __will__ migrate to a cross-platform build**.
+
+It is not fully developed yet expect it to be nearing completion in a week or two.
 
 ---
 
