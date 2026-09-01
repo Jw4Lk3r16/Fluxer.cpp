@@ -53,6 +53,64 @@ static ParsedWsUrl parse_ws_url(const std::string& url) {
     return out;
 }
 
+// --- RAII for WinHTTP handles -----------------------------------------
+//
+// Previously every failure branch in connect() manually called
+// WinHttpCloseHandle() in the right order for whichever handles had been
+// opened so far, repeated across ~6 branches. Any C++ exception thrown
+// between acquiring a handle and reaching that branch's cleanup (e.g. from
+// nlohmann::json parsing a malformed payload) would skip the cleanup
+// entirely and leak the handle. Single-owner, move-only wrapper — closes
+// automatically on any scope exit, including exception unwinding.
+class WinHttpHandle {
+public:
+    WinHttpHandle() = default;
+    explicit WinHttpHandle(HINTERNET h) : h_(h) {}
+    WinHttpHandle(const WinHttpHandle&) = delete;
+    WinHttpHandle& operator=(const WinHttpHandle&) = delete;
+    WinHttpHandle(WinHttpHandle&& other) noexcept : h_(other.h_) { other.h_ = nullptr; }
+    WinHttpHandle& operator=(WinHttpHandle&& other) noexcept {
+        if (this != &other) { close(); h_ = other.h_; other.h_ = nullptr; }
+        return *this;
+    }
+    ~WinHttpHandle() { close(); }
+
+    HINTERNET get() const { return h_; }
+    explicit operator bool() const { return h_ != nullptr; }
+    void close() { if (h_) { WinHttpCloseHandle(h_); h_ = nullptr; } }
+
+private:
+    HINTERNET h_{nullptr};
+};
+
+// --- RAII for the heartbeat thread -------------------------------------
+//
+// Previously heartbeat cleanup (stop flag + join) only ran at the bottom of
+// each connection attempt's happy path. If any exception escaped between
+// starting the thread and reaching that code — e.g. an unexpected JSON
+// field type deep in dispatch handling — stack unwinding would destroy a
+// still-joinable std::thread and call std::terminate() per its destructor
+// contract. This guard's destructor runs on every exit path (normal break
+// *or* exception unwinding) because C++ destroys stack locals in reverse
+// declaration order regardless of how the scope is left.
+class HeartbeatGuard {
+public:
+    HeartbeatGuard(std::thread& t, std::atomic<bool>& stopFlag, std::atomic<bool>& runningFlag)
+        : thread_(t), stop_(stopFlag), running_(runningFlag) {}
+    ~HeartbeatGuard() {
+        stop_.store(true);
+        if (thread_.joinable()) thread_.join();
+        running_.store(false);
+    }
+    HeartbeatGuard(const HeartbeatGuard&) = delete;
+    HeartbeatGuard& operator=(const HeartbeatGuard&) = delete;
+
+private:
+    std::thread& thread_;
+    std::atomic<bool>& stop_;
+    std::atomic<bool>& running_;
+};
+
 // Helper: send a UTF-8 text message over WinHTTP WebSocket
 static DWORD send_websocket_message(HINTERNET hWebSocket, const std::string& payload) {
     return WinHttpWebSocketSend(
@@ -63,8 +121,8 @@ static DWORD send_websocket_message(HINTERNET hWebSocket, const std::string& pay
     );
 }
 
-// Build IDENTIFY payload (sent after HELLO). Never logged in full — see
-// debug_handle_raw_frame below, which only logs t/op, not payload bodies.
+// Build IDENTIFY payload (sent after HELLO). Never logged in full — see the
+// IDENTIFY-sent log line below, which only logs a redacted token.
 static std::string build_identify(const std::string& token) {
     nlohmann::json identify = {
         {"op", 2},
@@ -97,20 +155,10 @@ static std::string build_resume(const std::string& token, const std::string& ses
 // WinHTTP's WebSocket API can split one logical message across several
 // WinHttpWebSocketReceive calls. It marks every chunk of a message except
 // the last as WINHTTP_WEB_SOCKET_UTF8_FRAGMENT_BUFFER_TYPE, and only the
-// final chunk as WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE. A previous
-// version of this loop only appended bytes to `acc` when it saw the
-// _MESSAGE_ type and used a brace-matching scanner to pull JSON objects out
-// of whatever survived — which silently dropped every FRAGMENT chunk. For
-// small payloads (HELLO) that never showed up; for a large READY payload
-// (guild roles/regions/member profile all nested under "d") most of the
-// message was fragmented and got thrown away, leaving only stray bytes that
-// happened to still parse as small, unrelated-looking JSON objects.
-//
-// aiohttp (and browsers) do this reassembly for you transparently, which is
-// why the Python/JS reference clients just do `json.loads(msg.data)` on one
-// complete message with no manual scanning. We now do the same: accumulate
-// every chunk regardless of FRAGMENT vs MESSAGE type, and only parse+clear
-// `acc` once WinHTTP reports the MESSAGE type, meaning the message is done.
+// final chunk as WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE. We accumulate
+// every chunk regardless of type and only parse+clear `acc` once WinHTTP
+// reports the MESSAGE type, meaning the message is fully reassembled —
+// matching what aiohttp/browsers do transparently for you.
 
 GatewayClient::GatewayClient(const std::string& t)
     : token(t) { }
@@ -123,17 +171,29 @@ void GatewayClient::on_message_create(const std::function<void(const nlohmann::j
     dispatcher.on_message_create(cb);
 }
 
+void GatewayClient::stop() {
+    stop_requested_.store(true);
+    // Force-cancel a blocking receive so connect() notices promptly rather
+    // than waiting for the next server message. Same idempotent pattern
+    // the heartbeat thread uses on a missed ACK — safe if both race to
+    // close the same handle.
+    void* h = active_ws_handle_.exchange(nullptr);
+    if (h) WinHttpCloseHandle(static_cast<HINTERNET>(h));
+}
+
 void GatewayClient::connect() {
     int reconnectAttempt = 0;
 
     std::string session_id;
     int last_seq = -1;
+    // Tracks whether the *server* told us the session is resumable (via
+    // op 9 INVALID_SESSION's `d` field, or a 4009 close code). The
+    // reconnect decision below uses this directly instead of a second,
+    // separately-initialized local that used to shadow and discard it.
+    bool session_resumable = true;
 
     // Resolve the real gateway URL via GET /gateway/bot before dialing
-    // anything, matching WebSocketManager.connect() in the JS client. This
-    // used to hardcode "gateway.fluxer.app" with path "/", which may not be
-    // the actual event gateway — hence receiving bare, unenveloped objects
-    // instead of a proper op/t/s/d dispatch stream.
+    // anything, matching WebSocketManager.connect() in the JS client.
     ParsedWsUrl resolved{fallback_host, "/"};
     if (rest_) {
         try {
@@ -155,77 +215,89 @@ void GatewayClient::connect() {
     std::wstring wPath = to_wide(resolved.path + queryChar + "v=" + gateway_version + "&encoding=json");
 
     while (true) {
-        HINTERNET hSession = WinHttpOpen(
+        if (stop_requested_.load()) {
+            Logger::instance().info("stop() was called — not (re)connecting.");
+            break;
+        }
+
+        WinHttpHandle hSession(WinHttpOpen(
             L"FluxerPP/1.0",
             WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
             WINHTTP_NO_PROXY_NAME,
             WINHTTP_NO_PROXY_BYPASS,
             0
-        );
+        ));
 
         if (!hSession) {
             Logger::instance().error("WinHttpOpen failed");
             return;
         }
 
-        HINTERNET hConnect = WinHttpConnect(
-            hSession,
+        WinHttpHandle hConnect(WinHttpConnect(
+            hSession.get(),
             wHost.c_str(),
             INTERNET_DEFAULT_HTTPS_PORT,
             0
-        );
+        ));
 
         if (!hConnect) {
             Logger::instance().error("WinHttpConnect failed");
-            WinHttpCloseHandle(hSession);
-            return;
+            return; // hSession closes automatically
         }
 
-        HINTERNET hRequest = WinHttpOpenRequest(
-            hConnect,
+        WinHttpHandle hRequest(WinHttpOpenRequest(
+            hConnect.get(),
             L"GET",
             wPath.c_str(),
             NULL,
             WINHTTP_NO_REFERER,
             WINHTTP_DEFAULT_ACCEPT_TYPES,
             WINHTTP_FLAG_SECURE
-        );
+        ));
 
         if (!hRequest) {
             Logger::instance().error("WinHttpOpenRequest failed");
-            WinHttpCloseHandle(hConnect);
-            WinHttpCloseHandle(hSession);
-            return;
+            return; // hConnect, hSession close automatically
         }
 
-        BOOL opt = WinHttpSetOption(hRequest, WINHTTP_OPTION_UPGRADE_TO_WEB_SOCKET, NULL, 0);
+        BOOL opt = WinHttpSetOption(hRequest.get(), WINHTTP_OPTION_UPGRADE_TO_WEB_SOCKET, NULL, 0);
         if (!opt) {
             Logger::instance().error("Failed to set WebSocket upgrade option");
-            WinHttpCloseHandle(hRequest);
-            WinHttpCloseHandle(hConnect);
-            WinHttpCloseHandle(hSession);
             return;
         }
 
-        if (!WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+        if (!WinHttpSendRequest(hRequest.get(), WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                                 WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
-            !WinHttpReceiveResponse(hRequest, NULL)) {
+            !WinHttpReceiveResponse(hRequest.get(), NULL)) {
             Logger::instance().error("WebSocket handshake failed");
-            WinHttpCloseHandle(hRequest);
-            WinHttpCloseHandle(hConnect);
-            WinHttpCloseHandle(hSession);
             return;
         }
 
-        HINTERNET hWebSocket = WinHttpWebSocketCompleteUpgrade(hRequest, (DWORD_PTR)NULL);
-        WinHttpCloseHandle(hRequest);
+        HINTERNET rawWebSocket = WinHttpWebSocketCompleteUpgrade(hRequest.get(), (DWORD_PTR)NULL);
+        hRequest.close(); // WinHTTP's documented pattern: close the request handle right after upgrade, win or lose
 
-        if (!hWebSocket) {
+        if (!rawWebSocket) {
             Logger::instance().error("WebSocket upgrade failed");
-            WinHttpCloseHandle(hConnect);
-            WinHttpCloseHandle(hSession);
             return;
         }
+
+        // active_ws_handle_ mirrors this connection attempt's live socket so
+        // stop() (any thread) and the heartbeat thread's missed-ACK path can
+        // both force-cancel a blocking receive via the same atomic exchange
+        // — whichever gets there first wins, the other sees nullptr and
+        // no-ops, so it's safe even if both race.
+        active_ws_handle_.store(static_cast<void*>(rawWebSocket));
+        struct ActiveHandleGuard {
+            std::atomic<void*>& slot;
+            HINTERNET h;
+            ~ActiveHandleGuard() {
+                // Only clear/close if nobody else (stop()/missed-ACK) already did.
+                void* expected = h;
+                if (slot.compare_exchange_strong(expected, nullptr)) {
+                    WinHttpCloseHandle(h);
+                }
+            }
+        } activeHandleGuard{active_ws_handle_, rawWebSocket};
 
         Logger::instance().info("Connected via WinHTTP WebSocket");
 
@@ -238,8 +310,19 @@ void GatewayClient::connect() {
         std::atomic<int> heartbeat_interval_ms{0};
         std::atomic<bool> heartbeat_running{false};
         std::atomic<bool> stop_heartbeat{false};
+        // Set true right after we send any heartbeat (scheduled or
+        // server-requested), cleared on op 11 (HEARTBEAT ACK). If it's
+        // still true when the heartbeat thread wakes up to send the next
+        // one, the previous ACK never arrived — previously this was never
+        // checked at all, so a half-dead connection with no ACKs could sit
+        // blocked in WinHttpWebSocketReceive indefinitely.
+        std::atomic<bool> awaiting_ack{false};
         std::mutex seq_mutex;
         std::thread heartbeatThread;
+        // Declared *after* the thread/atomics it references so it destructs
+        // *before* them (reverse declaration order) on every exit path —
+        // see the class comment above.
+        HeartbeatGuard heartbeatGuard(heartbeatThread, stop_heartbeat, heartbeat_running);
 
         bool identified_or_resumed = false;
         bool connectionClosed = false;
@@ -251,7 +334,7 @@ void GatewayClient::connect() {
 
         while (true) {
             DWORD hr = WinHttpWebSocketReceive(
-                hWebSocket,
+                rawWebSocket,
                 reinterpret_cast<BYTE*>(buffer.data()),
                 static_cast<DWORD>(buffer.size()),
                 &bytesRead,
@@ -259,16 +342,19 @@ void GatewayClient::connect() {
             );
 
             if (hr != NO_ERROR) {
-                Logger::instance().warn("Receive failed, code=" + std::to_string(hr));
+                if (stop_requested_.load()) {
+                    Logger::instance().info("Receive canceled by stop().");
+                } else {
+                    Logger::instance().warn("Receive failed, code=" + std::to_string(hr));
+                }
 
                 closeStatus = 0;
                 closeReasonLength = sizeof(closeReason);
                 DWORD queryHr = WinHttpWebSocketQueryCloseStatus(
-                    hWebSocket, &closeStatus, closeReason, closeReasonLength, &closeReasonLength
+                    rawWebSocket, &closeStatus, closeReason, closeReasonLength, &closeReasonLength
                 );
-                Logger::instance().warn("Close status=" + std::to_string(closeStatus));
-                if (queryHr != NO_ERROR) {
-                    Logger::instance().warn("Close reason unavailable (queryHr=" + std::to_string(queryHr) + ")");
+                if (queryHr == NO_ERROR) {
+                    Logger::instance().warn("Close status=" + std::to_string(closeStatus));
                 }
 
                 connectionClosed = true;
@@ -279,7 +365,7 @@ void GatewayClient::connect() {
                 closeStatus = 0;
                 closeReasonLength = sizeof(closeReason);
                 WinHttpWebSocketQueryCloseStatus(
-                    hWebSocket, &closeStatus, closeReason, closeReasonLength, &closeReasonLength
+                    rawWebSocket, &closeStatus, closeReason, closeReasonLength, &closeReasonLength
                 );
                 Logger::instance().info("Received CLOSE frame, status=" + std::to_string(closeStatus));
                 connectionClosed = true;
@@ -291,14 +377,9 @@ void GatewayClient::connect() {
                 acc.append(buffer.data(), bytesRead);
 
                 if (bufferType == WINHTTP_WEB_SOCKET_UTF8_FRAGMENT_BUFFER_TYPE) {
-                    // Only part of this message has arrived — keep accumulating
-                    // and wait for the chunk WinHTTP marks as _MESSAGE_ type.
-                    continue;
+                    continue; // more of this message is still coming
                 }
 
-                // _MESSAGE_ type: this was the final chunk, so `acc` now holds
-                // exactly one complete JSON envelope. Take ownership and reset
-                // the accumulator for the next message.
                 std::string js = std::move(acc);
                 acc.clear();
 
@@ -306,138 +387,176 @@ void GatewayClient::connect() {
                     Logger::instance().debug("RAW FRAME: " + js);
                 }
 
-                nlohmann::json data;
+                // Everything from here through dispatch used to only have
+                // json::parse guarded by try/catch. data.value("op", -1)
+                // and friends can themselves throw nlohmann::json::type_error
+                // if a field exists with an unexpected type — e.g. "op" sent
+                // as a string. That exception used to propagate out of this
+                // whole block uncaught, unwinding past a still-joinable
+                // heartbeatThread and calling std::terminate(). Wrapping the
+                // full parse-through-dispatch sequence closes that gap: a
+                // malformed message is now logged and skipped, not fatal.
                 try {
-                    data = nlohmann::json::parse(js);
+                    nlohmann::json data = nlohmann::json::parse(js);
+
+                    if (data.contains("s") && !data["s"].is_null()) {
+                        std::lock_guard<std::mutex> lk(seq_mutex);
+                        last_seq = data.value("s", last_seq);
+                    }
+
+                    int op = data.value("op", -1);
+
+                    if (debug_logging_) {
+                        std::string t = data.value("t", std::string());
+                        Logger::instance().debug("DISPATCH t=" + (t.empty() ? "<none>" : t) +
+                                                  " op=" + std::to_string(op));
+                    }
+
+                    if (op == 10) { // HELLO
+                        int interval = 0;
+                        try { interval = data["d"].value("heartbeat_interval", 0); } catch (...) {}
+                        heartbeat_interval_ms.store(interval);
+                        Logger::instance().info("HELLO interval=" + std::to_string(interval));
+
+                        if (!heartbeat_running.load()) {
+                            heartbeat_running.store(true);
+                            stop_heartbeat.store(false);
+                            heartbeatThread = std::thread([&]() {
+                                using namespace std::chrono;
+                                int local_interval = heartbeat_interval_ms.load();
+                                if (local_interval <= 0) local_interval = 41250;
+                                std::this_thread::sleep_for(milliseconds(local_interval / 2));
+                                while (!stop_heartbeat.load()) {
+                                    if (awaiting_ack.load()) {
+                                        Logger::instance().warn(
+                                            "Missed heartbeat ACK — forcing reconnect");
+                                        void* h = active_ws_handle_.exchange(nullptr);
+                                        if (h) WinHttpCloseHandle(static_cast<HINTERNET>(h));
+                                        break;
+                                    }
+
+                                    int seq_snapshot;
+                                    {
+                                        std::lock_guard<std::mutex> lk(seq_mutex);
+                                        seq_snapshot = last_seq;
+                                    }
+                                    nlohmann::json hb;
+                                    hb["op"] = 1;
+                                    hb["d"] = (seq_snapshot == -1) ? nlohmann::json(nullptr) : nlohmann::json(seq_snapshot);
+
+                                    void* sockRaw = active_ws_handle_.load();
+                                    if (!sockRaw) break; // already closed elsewhere
+                                    DWORD sendHr = send_websocket_message(static_cast<HINTERNET>(sockRaw), hb.dump());
+                                    if (sendHr != NO_ERROR) {
+                                        Logger::instance().warn("Heartbeat send failed, code=" + std::to_string(sendHr));
+                                        break;
+                                    }
+                                    awaiting_ack.store(true);
+
+                                    int sleep_ms = heartbeat_interval_ms.load();
+                                    if (sleep_ms <= 0) sleep_ms = local_interval;
+                                    std::this_thread::sleep_for(milliseconds(sleep_ms));
+                                }
+                            });
+                        }
+
+                        if (want_resume && !identified_or_resumed) {
+                            std::string resumePayload = build_resume(this->token, session_id, last_seq);
+                            DWORD sendHr = send_websocket_message(rawWebSocket, resumePayload);
+                            if (sendHr == NO_ERROR) {
+                                Logger::instance().info("Sent RESUME (session_id=" + session_id + ", seq=" + std::to_string(last_seq) + ")");
+                                identified_or_resumed = true;
+                            } else {
+                                Logger::instance().warn("RESUME send failed, code=" + std::to_string(sendHr) + " — will IDENTIFY");
+                            }
+                        }
+
+                        if (!identified_or_resumed) {
+                            std::string identifyPayload = build_identify(this->token);
+                            DWORD sendHr = send_websocket_message(rawWebSocket, identifyPayload);
+                            if (sendHr != NO_ERROR) {
+                                Logger::instance().error("IDENTIFY send failed, code=" + std::to_string(sendHr));
+                                connectionClosed = true;
+                            } else {
+                                Logger::instance().info("Sent IDENTIFY (token=" + Logger::redact(this->token) + ")");
+                                identified_or_resumed = true;
+                            }
+                        }
+
+                    } else if (op == 0) { // DISPATCH
+                        std::string t = data.value("t", "");
+
+                        if (t == "READY") {
+                            try { session_id = data["d"].value("session_id", session_id); } catch (...) {}
+                            // A successful READY means this connection attempt
+                            // worked end to end — reset the backoff counter so
+                            // an unrelated disconnect much later in the
+                            // process's life doesn't inherit a nearly-exhausted
+                            // budget from a rocky start hours ago.
+                            reconnectAttempt = 0;
+                            session_resumable = true;
+                            Logger::instance().info("READY received; session_id=" + session_id);
+                            dispatcher.dispatch_ready();
+                        } else if (t == "MESSAGE_CREATE") {
+                            try {
+                                dispatcher.dispatch_message_create(data["d"]);
+                            } catch (const std::exception& ex) {
+                                Logger::instance().error(std::string("MESSAGE_CREATE handling failed: ") + ex.what());
+                            }
+                        }
+                        // other dispatch events: add routing here as needed
+
+                    } else if (op == 1) { // Server heartbeat request
+                        int seq_snapshot;
+                        {
+                            std::lock_guard<std::mutex> lk(seq_mutex);
+                            seq_snapshot = last_seq;
+                        }
+                        nlohmann::json hb;
+                        hb["op"] = 1;
+                        hb["d"] = (seq_snapshot == -1) ? nlohmann::json(nullptr) : nlohmann::json(seq_snapshot);
+
+                        DWORD sendHr = send_websocket_message(rawWebSocket, hb.dump());
+                        if (sendHr != NO_ERROR) {
+                            Logger::instance().warn("Heartbeat (response) send failed, code=" + std::to_string(sendHr));
+                            connectionClosed = true;
+                        } else {
+                            awaiting_ack.store(true);
+                        }
+
+                    } else if (op == 7) { // RECONNECT
+                        Logger::instance().info("Server requested reconnect (OP 7)");
+                        // Deliberately does NOT touch session_resumable —
+                        // RECONNECT always implies "come back and resume",
+                        // unlike INVALID SESSION which explicitly tells us
+                        // whether resuming is possible.
+                        connectionClosed = true;
+
+                    } else if (op == 9) { // INVALID SESSION
+                        bool resumable = false;
+                        try { resumable = data["d"].get<bool>(); } catch (...) {}
+                        Logger::instance().warn(std::string("INVALID SESSION (resumable=") + (resumable ? "true" : "false") + ")");
+                        session_resumable = resumable;
+                        if (!resumable) {
+                            session_id.clear();
+                            last_seq = -1;
+                        }
+                        connectionClosed = true;
+
+                    } else if (op == 11) { // HEARTBEAT ACK
+                        awaiting_ack.store(false);
+                        if (debug_logging_) Logger::instance().debug("Heartbeat ACK");
+                    }
+
                 } catch (const std::exception& ex) {
-                    Logger::instance().warn(std::string("JSON parse error: ") + ex.what());
+                    Logger::instance().warn(std::string("Failed to handle message: ") + ex.what());
+                    continue;
+                } catch (...) {
+                    Logger::instance().warn("Failed to handle message: unknown exception");
                     continue;
                 }
 
-                if (data.contains("s") && !data["s"].is_null()) {
-                    std::lock_guard<std::mutex> lk(seq_mutex);
-                    last_seq = data.value("s", last_seq);
-                }
-
-                int op = data.value("op", -1);
-
-                if (debug_logging_) {
-                    std::string t = data.value("t", std::string());
-                    Logger::instance().debug("DISPATCH t=" + (t.empty() ? "<none>" : t) +
-                                              " op=" + std::to_string(op));
-                }
-
-                if (op == 10) { // HELLO
-                    int interval = 0;
-                    try { interval = data["d"].value("heartbeat_interval", 0); } catch (...) {}
-                    heartbeat_interval_ms.store(interval);
-                    Logger::instance().info("HELLO interval=" + std::to_string(interval));
-
-                    if (!heartbeat_running.load()) {
-                        heartbeat_running.store(true);
-                        stop_heartbeat.store(false);
-                        heartbeatThread = std::thread([&]() {
-                            using namespace std::chrono;
-                            int local_interval = heartbeat_interval_ms.load();
-                            if (local_interval <= 0) local_interval = 41250;
-                            std::this_thread::sleep_for(milliseconds(local_interval / 2));
-                            while (!stop_heartbeat.load()) {
-                                int seq_snapshot = -1;
-                                {
-                                    std::lock_guard<std::mutex> lk(seq_mutex);
-                                    seq_snapshot = last_seq;
-                                }
-                                nlohmann::json hb;
-                                hb["op"] = 1;
-                                hb["d"] = (seq_snapshot == -1) ? nlohmann::json(nullptr) : nlohmann::json(seq_snapshot);
-
-                                DWORD sendHr = send_websocket_message(hWebSocket, hb.dump());
-                                if (sendHr != NO_ERROR) {
-                                    Logger::instance().warn("Heartbeat send failed, code=" + std::to_string(sendHr));
-                                    break;
-                                }
-                                int sleep_ms = heartbeat_interval_ms.load();
-                                if (sleep_ms <= 0) sleep_ms = local_interval;
-                                std::this_thread::sleep_for(milliseconds(sleep_ms));
-                            }
-                        });
-                    }
-
-                    if (want_resume && !identified_or_resumed) {
-                        std::string resumePayload = build_resume(this->token, session_id, last_seq);
-                        DWORD sendHr = send_websocket_message(hWebSocket, resumePayload);
-                        if (sendHr == NO_ERROR) {
-                            Logger::instance().info("Sent RESUME (session_id=" + session_id + ", seq=" + std::to_string(last_seq) + ")");
-                            identified_or_resumed = true;
-                        } else {
-                            Logger::instance().warn("RESUME send failed, code=" + std::to_string(sendHr) + " — will IDENTIFY");
-                        }
-                    }
-
-                    if (!identified_or_resumed) {
-                        std::string identifyPayload = build_identify(this->token);
-                        DWORD sendHr = send_websocket_message(hWebSocket, identifyPayload);
-                        if (sendHr != NO_ERROR) {
-                            Logger::instance().error("IDENTIFY send failed, code=" + std::to_string(sendHr));
-                            connectionClosed = true;
-                            break;
-                        }
-                        Logger::instance().info("Sent IDENTIFY (token=" + Logger::redact(this->token) + ")");
-                        identified_or_resumed = true;
-                    }
-
-                } else if (op == 0) { // DISPATCH
-                    std::string t = data.value("t", "");
-
-                    if (t == "READY") {
-                        try { session_id = data["d"].value("session_id", session_id); } catch (...) {}
-                        Logger::instance().info("READY received; session_id=" + session_id);
-                        dispatcher.dispatch_ready();
-                    } else if (t == "MESSAGE_CREATE") {
-                        try {
-                            dispatcher.dispatch_message_create(data["d"]);
-                        } catch (const std::exception& ex) {
-                            Logger::instance().error(std::string("MESSAGE_CREATE handling failed: ") + ex.what());
-                        }
-                    }
-                    // other dispatch events: add routing here as needed
-
-                } else if (op == 1) { // Server heartbeat request
-                    int seq_snapshot = -1;
-                    {
-                        std::lock_guard<std::mutex> lk(seq_mutex);
-                        seq_snapshot = last_seq;
-                    }
-                    nlohmann::json hb;
-                    hb["op"] = 1;
-                    hb["d"] = (seq_snapshot == -1) ? nlohmann::json(nullptr) : nlohmann::json(seq_snapshot);
-
-                    DWORD sendHr = send_websocket_message(hWebSocket, hb.dump());
-                    if (sendHr != NO_ERROR) {
-                        Logger::instance().warn("Heartbeat (response) send failed, code=" + std::to_string(sendHr));
-                        connectionClosed = true;
-                        break;
-                    }
-
-                } else if (op == 7) { // RECONNECT
-                    Logger::instance().info("Server requested reconnect (OP 7)");
-                    connectionClosed = true;
-                    break;
-
-                } else if (op == 9) { // INVALID SESSION
-                    bool resumable = false;
-                    try { resumable = data["d"].get<bool>(); } catch (...) {}
-                    Logger::instance().warn(std::string("INVALID SESSION (resumable=") + (resumable ? "true" : "false") + ")");
-                    if (!resumable) {
-                        session_id.clear();
-                        last_seq = -1;
-                    }
-                    connectionClosed = true;
-                    break;
-
-                } else if (op == 11) { // HEARTBEAT ACK
-                    if (debug_logging_) Logger::instance().debug("Heartbeat ACK");
-                }
+                if (connectionClosed) break;
 
             } else if (bufferType == WINHTTP_WEB_SOCKET_BINARY_MESSAGE_BUFFER_TYPE ||
                        bufferType == WINHTTP_WEB_SOCKET_BINARY_FRAGMENT_BUFFER_TYPE) {
@@ -447,27 +566,25 @@ void GatewayClient::connect() {
             }
         } // end receive loop
 
-        if (heartbeat_running.load()) {
-            stop_heartbeat.store(true);
-            if (heartbeatThread.joinable()) heartbeatThread.join();
-            heartbeat_running.store(false);
-        }
+        // heartbeatGuard, activeHandleGuard, hRequest/hConnect/hSession all
+        // clean up automatically here via RAII as this scope ends (reverse
+        // declaration order), including on the stop_requested_ exit path.
 
-        WinHttpCloseHandle(hWebSocket);
-        WinHttpCloseHandle(hConnect);
-        WinHttpCloseHandle(hSession);
+        if (stop_requested_.load()) {
+            break;
+        }
 
         if (!connectionClosed) {
             Logger::instance().info("Connection ended without close status; stopping.");
             break;
         }
 
-        bool resumable = false;
         if (closeStatus == 1000) {
             Logger::instance().info("Normal close (1000). Not reconnecting.");
             break;
-        } else if (closeStatus == 4009) {
-            resumable = true;
+        }
+        if (closeStatus == 4009) {
+            session_resumable = true; // server-side signal, in case op 9 didn't already tell us
         }
 
         reconnectAttempt++;
@@ -481,10 +598,10 @@ void GatewayClient::connect() {
         Logger::instance().info("Reconnecting in " + std::to_string(backoffSeconds) + "s (attempt " + std::to_string(reconnectAttempt) + ")");
         std::this_thread::sleep_for(std::chrono::seconds(backoffSeconds));
 
-        if (!resumable) {
+        if (!session_resumable) {
             session_id.clear();
             last_seq = -1;
-        } else {
+        } else if (!session_id.empty()) {
             Logger::instance().info("Attempting resume on reconnect (session_id=" + session_id + ", seq=" + std::to_string(last_seq) + ")");
         }
     } // end outer reconnect loop
