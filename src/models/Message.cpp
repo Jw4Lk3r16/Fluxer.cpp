@@ -2,27 +2,12 @@
 #include "fluxerpp/models/Message.h"
 #include "fluxerpp/RestClient.h"
 #include "fluxerpp/util/Json.h"
-#include <stdexcept>
 
 namespace fluxerpp {
 namespace models {
 
 using util::Json;
-
-namespace {
-// Snowflake IDs arrive as JSON strings (they exceed safe JS integer range).
-// std::stoull throws std::invalid_argument/out_of_range on malformed input;
-// wrap it so the error names which field failed instead of surfacing a bare
-// "stoull" exception from deep inside from_data().
-std::uint64_t parse_snowflake(const Json& data, const char* field) {
-    try {
-        return std::stoull(data.at(field).get<std::string>());
-    } catch (const std::exception& ex) {
-        throw std::runtime_error(std::string("Message::from_data: invalid '") + field +
-                                  "' field: " + ex.what());
-    }
-}
-} // namespace
+using util::parse_snowflake;
 
 std::optional<std::uint64_t> Message::guild_id() const {
     if (guild_) return guild_->id;

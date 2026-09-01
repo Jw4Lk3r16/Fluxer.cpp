@@ -1,5 +1,6 @@
 // src/GatewayClient.cpp
 #include "fluxerpp/GatewayClient.h"
+#include "fluxerpp/RestClient.h"
 #include "fluxerpp/util/Logger.h"
 #include <windows.h>
 #include <winhttp.h>
@@ -17,6 +18,40 @@
 namespace fluxerpp {
 
 using util::Logger;
+
+static std::wstring to_wide(const std::string& s) {
+    if (s.empty()) return std::wstring();
+    int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+    std::wstring w(len, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, &w[0], len);
+    if (!w.empty() && w.back() == L'\0') w.pop_back(); // drop the extra null MultiByteToWideChar wrote
+    return w;
+}
+
+// Splits a "wss://host[:port]/path?query" URL into host and path+query.
+// Path defaults to "/" if the URL has none.
+struct ParsedWsUrl {
+    std::string host;
+    std::string path;
+};
+
+static ParsedWsUrl parse_ws_url(const std::string& url) {
+    ParsedWsUrl out;
+    std::string rest = url;
+    auto schemePos = rest.find("://");
+    if (schemePos != std::string::npos) rest = rest.substr(schemePos + 3);
+
+    auto slashPos = rest.find('/');
+    if (slashPos == std::string::npos) {
+        out.host = rest;
+        out.path = "/";
+    } else {
+        out.host = rest.substr(0, slashPos);
+        out.path = rest.substr(slashPos);
+        if (out.path.empty()) out.path = "/";
+    }
+    return out;
+}
 
 // Helper: send a UTF-8 text message over WinHTTP WebSocket
 static DWORD send_websocket_message(HINTERNET hWebSocket, const std::string& payload) {
@@ -94,6 +129,31 @@ void GatewayClient::connect() {
     std::string session_id;
     int last_seq = -1;
 
+    // Resolve the real gateway URL via GET /gateway/bot before dialing
+    // anything, matching WebSocketManager.connect() in the JS client. This
+    // used to hardcode "gateway.fluxer.app" with path "/", which may not be
+    // the actual event gateway — hence receiving bare, unenveloped objects
+    // instead of a proper op/t/s/d dispatch stream.
+    ParsedWsUrl resolved{fallback_host, "/"};
+    if (rest_) {
+        try {
+            nlohmann::json gw = rest_->get("/gateway/bot");
+            std::string url = gw.at("url").get<std::string>();
+            resolved = parse_ws_url(url);
+            Logger::instance().info("Resolved gateway via /gateway/bot: " + url);
+        } catch (const std::exception& ex) {
+            Logger::instance().error(std::string("GET /gateway/bot failed: ") + ex.what() +
+                                      " — falling back to " + fallback_host);
+        }
+    } else {
+        Logger::instance().warn("No RestClient bound (call bind_rest()) — using fallback_host " +
+                                 fallback_host + " instead of resolving /gateway/bot");
+    }
+
+    std::wstring wHost = to_wide(resolved.host);
+    std::string queryChar = (resolved.path.find('?') == std::string::npos) ? "?" : "&";
+    std::wstring wPath = to_wide(resolved.path + queryChar + "v=" + gateway_version + "&encoding=json");
+
     while (true) {
         HINTERNET hSession = WinHttpOpen(
             L"FluxerPP/1.0",
@@ -110,7 +170,7 @@ void GatewayClient::connect() {
 
         HINTERNET hConnect = WinHttpConnect(
             hSession,
-            L"gateway.fluxer.app",
+            wHost.c_str(),
             INTERNET_DEFAULT_HTTPS_PORT,
             0
         );
@@ -124,7 +184,7 @@ void GatewayClient::connect() {
         HINTERNET hRequest = WinHttpOpenRequest(
             hConnect,
             L"GET",
-            L"/?v=1&encoding=json",
+            wPath.c_str(),
             NULL,
             WINHTTP_NO_REFERER,
             WINHTTP_DEFAULT_ACCEPT_TYPES,

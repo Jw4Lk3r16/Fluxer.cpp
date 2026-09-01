@@ -172,4 +172,69 @@ nlohmann::json RestClient::del(const std::string& path) {
     return request("DELETE", path, nullptr);
 }
 
+std::string RestClient::url_encode_component(const std::string& s) {
+    CURL* curl = curl_easy_init();
+    if (!curl) return s; // best-effort fallback; shouldn't happen in practice
+    char* escaped = curl_easy_escape(curl, s.c_str(), static_cast<int>(s.size()));
+    std::string out = escaped ? escaped : s;
+    if (escaped) curl_free(escaped);
+    curl_easy_cleanup(curl);
+    return out;
+}
+
+nlohmann::json RestClient::send_message(std::uint64_t channel_id, const nlohmann::json& payload) {
+    return post("/channels/" + std::to_string(channel_id) + "/messages", payload);
+}
+
+nlohmann::json RestClient::edit_message(std::uint64_t channel_id, std::uint64_t message_id,
+                                        const nlohmann::json& payload) {
+    return patch("/channels/" + std::to_string(channel_id) + "/messages/" + std::to_string(message_id), payload);
+}
+
+void RestClient::delete_message(std::uint64_t channel_id, std::uint64_t message_id) {
+    del("/channels/" + std::to_string(channel_id) + "/messages/" + std::to_string(message_id));
+}
+
+void RestClient::add_reaction(std::uint64_t channel_id, std::uint64_t message_id, const std::string& emoji) {
+    request("PUT",
+            "/channels/" + std::to_string(channel_id) + "/messages/" + std::to_string(message_id) +
+                "/reactions/" + url_encode_component(emoji) + "/@me",
+            nullptr);
+}
+
+void RestClient::delete_reaction(std::uint64_t channel_id, std::uint64_t message_id,
+                                 const std::string& emoji, const std::string& user) {
+    request("DELETE",
+            "/channels/" + std::to_string(channel_id) + "/messages/" + std::to_string(message_id) +
+                "/reactions/" + url_encode_component(emoji) + "/" + user,
+            nullptr);
+}
+
+void RestClient::delete_all_reactions(std::uint64_t channel_id, std::uint64_t message_id) {
+    del("/channels/" + std::to_string(channel_id) + "/messages/" + std::to_string(message_id) + "/reactions");
+}
+
+void RestClient::delete_all_reactions_for_emoji(std::uint64_t channel_id, std::uint64_t message_id,
+                                                const std::string& emoji) {
+    del("/channels/" + std::to_string(channel_id) + "/messages/" + std::to_string(message_id) +
+        "/reactions/" + url_encode_component(emoji));
+}
+
+void RestClient::pin_message(std::uint64_t channel_id, std::uint64_t message_id) {
+    request("PUT", "/channels/" + std::to_string(channel_id) + "/pins/" + std::to_string(message_id), nullptr);
+}
+
+void RestClient::unpin_message(std::uint64_t channel_id, std::uint64_t message_id) {
+    del("/channels/" + std::to_string(channel_id) + "/pins/" + std::to_string(message_id));
+}
+
+std::uint64_t RestClient::user_id() {
+    std::lock_guard<std::mutex> lk(user_id_mutex_);
+    if (!cached_user_id_.has_value()) {
+        nlohmann::json me = get("/users/@me");
+        cached_user_id_ = std::stoull(me.at("id").get<std::string>());
+    }
+    return *cached_user_id_;
+}
+
 } // namespace fluxerpp
