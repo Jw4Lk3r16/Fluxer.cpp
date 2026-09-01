@@ -1,4 +1,4 @@
-#include "../include/fluxerpp/FluxerClient.h"
+#include "fluxerpp/FluxerClient.h"
 
 namespace fluxerpp {
 
@@ -17,4 +17,4 @@ void FluxerClient::login() {
     gate.connect();
 }
 
-}
+} // namespace fluxerpp

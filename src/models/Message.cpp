@@ -1,24 +1,39 @@
+// Message.cpp
 #include "fluxerpp/models/Message.h"
 #include "fluxerpp/RestClient.h"
 #include "fluxerpp/util/Json.h"
+#include <stdexcept>
 
 namespace fluxerpp {
 namespace models {
 
 using util::Json;
 
-// optional guild_id
+namespace {
+// Snowflake IDs arrive as JSON strings (they exceed safe JS integer range).
+// std::stoull throws std::invalid_argument/out_of_range on malformed input;
+// wrap it so the error names which field failed instead of surfacing a bare
+// "stoull" exception from deep inside from_data().
+std::uint64_t parse_snowflake(const Json& data, const char* field) {
+    try {
+        return std::stoull(data.at(field).get<std::string>());
+    } catch (const std::exception& ex) {
+        throw std::runtime_error(std::string("Message::from_data: invalid '") + field +
+                                  "' field: " + ex.what());
+    }
+}
+} // namespace
+
 std::optional<std::uint64_t> Message::guild_id() const {
     if (guild_) return guild_->id;
     return std::nullopt;
 }
 
-// static constructor from JSON
 Message Message::from_data(const Json& data, RestClient* rest) {
     Message msg;
 
-    msg.id = std::stoull(data.at("id").get<std::string>());
-    msg.channel_id = std::stoull(data.at("channel_id").get<std::string>());
+    msg.id = parse_snowflake(data, "id");
+    msg.channel_id = parse_snowflake(data, "channel_id");
     msg.content = data.value("content", "");
     msg.timestamp = data.at("timestamp").get<std::string>();
 
@@ -26,24 +41,20 @@ Message Message::from_data(const Json& data, RestClient* rest) {
         msg.edited_timestamp = data["edited_timestamp"].get<std::string>();
     }
 
-    // author
     msg.author = User::from_data(data.at("author"), rest);
 
-    // mentions
     if (data.contains("mentions")) {
         for (const auto& u : data["mentions"]) {
             msg.mentions.push_back(User::from_data(u, rest));
         }
     }
 
-    // attachments
     if (data.contains("attachments")) {
         for (const auto& a : data["attachments"]) {
             msg.attachments.push_back(Attachment::from_data(a));
         }
     }
 
-    // embeds
     if (data.contains("embeds")) {
         for (const auto& e : data["embeds"]) {
             msg.embeds.push_back(Embed::from_data(e));
@@ -52,10 +63,8 @@ Message Message::from_data(const Json& data, RestClient* rest) {
 
     msg.pinned = data.value("pinned", false);
 
-    // bind rest
     msg.rest_ = rest;
 
-    // referenced_message
     if (data.contains("referenced_message") && !data["referenced_message"].is_null()) {
         auto ref = std::make_shared<Message>(
             Message::from_data(data["referenced_message"], rest)
@@ -63,7 +72,6 @@ Message Message::from_data(const Json& data, RestClient* rest) {
         msg.referenced_message = ref;
     }
 
-    // reactions
     if (data.contains("reactions")) {
         for (const auto& r : data["reactions"]) {
             msg.reactions.push_back(
@@ -75,7 +83,6 @@ Message Message::from_data(const Json& data, RestClient* rest) {
     return msg;
 }
 
-// helper: build file list JSON
 static std::optional<std::vector<Json>> build_file_list(
     const std::optional<File>& file,
     const std::optional<std::vector<File>>& files
@@ -94,7 +101,6 @@ static std::optional<std::vector<Json>> build_file_list(
     return std::nullopt;
 }
 
-// helper: convert embeds to JSON
 static std::optional<std::vector<Json>> build_embed_list(
     const std::optional<Embed>& embed,
     const std::optional<std::vector<Embed>>& embeds
@@ -113,7 +119,6 @@ static std::optional<std::vector<Json>> build_embed_list(
     return std::nullopt;
 }
 
-// --- send (same channel, no reply) ---
 Message Message::send(
     const std::optional<std::string>& content,
     const std::optional<Embed>& embed,
@@ -127,23 +132,10 @@ Message Message::send(
     }
 
     Json payload = extra;
+    if (content.has_value()) payload["content"] = *content;
+    if (auto embed_list = build_embed_list(embed, embeds)) payload["embeds"] = *embed_list;
+    if (auto file_list = build_file_list(file, files)) payload["files"] = *file_list;
 
-    // content
-    if (content.has_value()) {
-        payload["content"] = *content;
-    }
-
-    // embeds
-    if (auto embed_list = build_embed_list(embed, embeds)) {
-        payload["embeds"] = *embed_list;
-    }
-
-    // files
-    if (auto file_list = build_file_list(file, files)) {
-        payload["files"] = *file_list;
-    }
-
-    // perform REST call
     Json data = rest_->send_message(channel_id, payload);
 
     Message msg = Message::from_data(data, rest_);
@@ -152,7 +144,6 @@ Message Message::send(
     return msg;
 }
 
-// --- reply (message_reference) ---
 Message Message::reply(
     const std::optional<std::string>& content,
     const std::optional<Embed>& embed,
@@ -166,20 +157,10 @@ Message Message::reply(
     }
 
     Json payload = extra;
+    if (content.has_value()) payload["content"] = *content;
+    if (auto embed_list = build_embed_list(embed, embeds)) payload["embeds"] = *embed_list;
+    if (auto file_list = build_file_list(file, files)) payload["files"] = *file_list;
 
-    if (content.has_value()) {
-        payload["content"] = *content;
-    }
-
-    if (auto embed_list = build_embed_list(embed, embeds)) {
-        payload["embeds"] = *embed_list;
-    }
-
-    if (auto file_list = build_file_list(file, files)) {
-        payload["files"] = *file_list;
-    }
-
-    // message_reference
     Json message_reference;
     message_reference["message_id"] = std::to_string(id);
     message_reference["channel_id"] = std::to_string(channel_id);
@@ -196,7 +177,6 @@ Message Message::reply(
     return msg;
 }
 
-// --- send_to_channel (different channel) ---
 Message Message::send_to_channel(
     std::uint64_t target_channel_id,
     const std::optional<std::string>& content,
@@ -211,18 +191,9 @@ Message Message::send_to_channel(
     }
 
     Json payload = extra;
-
-    if (content.has_value()) {
-        payload["content"] = *content;
-    }
-
-    if (auto embed_list = build_embed_list(embed, embeds)) {
-        payload["embeds"] = *embed_list;
-    }
-
-    if (auto file_list = build_file_list(file, files)) {
-        payload["files"] = *file_list;
-    }
+    if (content.has_value()) payload["content"] = *content;
+    if (auto embed_list = build_embed_list(embed, embeds)) payload["embeds"] = *embed_list;
+    if (auto file_list = build_file_list(file, files)) payload["files"] = *file_list;
 
     Json data = rest_->send_message(target_channel_id, payload);
 
@@ -231,7 +202,6 @@ Message Message::send_to_channel(
     return msg;
 }
 
-// --- edit ---
 Message Message::edit(
     const std::optional<std::string>& content,
     const Json& extra
@@ -241,9 +211,7 @@ Message Message::edit(
     }
 
     Json payload = extra;
-    if (content.has_value()) {
-        payload["content"] = *content;
-    }
+    if (content.has_value()) payload["content"] = *content;
 
     Json data = rest_->edit_message(channel_id, id, payload);
 
@@ -253,7 +221,6 @@ Message Message::edit(
     return msg;
 }
 
-// --- delete ---
 void Message::delete_message() {
     if (!rest_) {
         throw std::runtime_error("Message is not bound to a RestClient");
@@ -261,7 +228,6 @@ void Message::delete_message() {
     rest_->delete_message(channel_id, id);
 }
 
-// --- reactions (public) ---
 void Message::add_reaction(const std::string& emoji) {
     if (!rest_) {
         throw std::runtime_error("Message is not bound to a RestClient");
@@ -302,7 +268,6 @@ void Message::clear_reaction(const PartialEmoji& emoji) {
     clear_reaction(emoji.to_string());
 }
 
-// --- pin / unpin ---
 void Message::pin() {
     if (!rest_) {
         throw std::runtime_error("Message is not bound to a RestClient");
@@ -319,25 +284,19 @@ void Message::unpin() {
     pinned = false;
 }
 
-// --- internal reaction helpers ---
 Reaction Message::_add_reaction(const Json& /*data*/,
                                 const PartialEmoji& emoji,
                                 std::uint64_t user_id) {
-    // find existing
     for (auto& reaction : reactions) {
         if (reaction.emoji == emoji.to_string()) {
             reaction.count += 1;
-
             if (rest_ && user_id == rest_->user_id()) {
                 reaction.me = true;
             }
-
             return reaction;
         }
     }
 
-
-    // new reaction
     Reaction reaction;
     reaction.emoji = emoji;
     reaction.count = 1;
@@ -354,27 +313,22 @@ Reaction Message::_remove_reaction(const Json& /*data*/,
                                    std::uint64_t user_id) {
     for (std::size_t i = 0; i < reactions.size(); ++i) {
         auto& reaction = reactions[i];
-
         if (reaction.emoji == emoji.to_string()) {
             reaction.count -= 1;
-
             if (rest_ && user_id == rest_->user_id()) {
                 reaction.me = false;
             }
-
             if (reaction.count <= 0) {
                 Reaction removed = reaction;
                 reactions.erase(reactions.begin() + i);
                 return removed;
             }
-
             return reaction;
         }
     }
     throw std::runtime_error("Reaction not found on message");
 }
 
-// --- cache guild (for replies) ---
 void Message::_cache_guild(Guild* g) {
     guild_ = g;
     if (referenced_message) {
@@ -382,7 +336,6 @@ void Message::_cache_guild(Guild* g) {
     }
 }
 
-// --- clear emoji internal ---
 std::optional<Reaction> Message::_clear_emoji(const PartialEmoji& emoji) {
     for (std::size_t i = 0; i < reactions.size(); ++i) {
         if (reactions[i].emoji == emoji.to_string()) {

@@ -11,7 +11,8 @@ public:
     explicit RestClient(const FluxerConfig& cfg);
     ~RestClient() = default;
 
-    // Generic request helper (throws on CURL error or JSON parse error)
+    // Generic request helper (throws on CURL error or unrecoverable HTTP error).
+    // Automatically retries once on HTTP 429, honoring Retry-After if present.
     nlohmann::json request(const std::string& method,
                            const std::string& path,
                            const nlohmann::json* body = nullptr);
@@ -23,6 +24,14 @@ public:
 
 private:
     FluxerConfig config;
+
+    struct RawResponse {
+        long http_code;
+        std::string body;
+        std::string headers;
+    };
+    RawResponse perform(const std::string& method, const std::string& path, const nlohmann::json* body);
+    static double parse_retry_after(const std::string& headers);
 };
 
 } // namespace fluxerpp

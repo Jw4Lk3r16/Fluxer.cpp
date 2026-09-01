@@ -25,6 +25,8 @@ add_executable(ping_bot
     examples/ping_bot.cpp
 )
 
+set_target_properties(ping_bot PROPERTIES LINK_FLAGS "-Wl,-subsystem,console")
+
 target_link_libraries(ping_bot
     fluxerpp
     winhttp

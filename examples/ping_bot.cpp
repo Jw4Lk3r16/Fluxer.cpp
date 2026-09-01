@@ -1,76 +1,53 @@
-#include <iostream>
-#include <string>
-#include <cstdlib>
-#include <curl/curl.h>                 // add
-#include "fluxerpp/env.h"
+// examples/ping_bot.cpp
+//
+// Minimal ping bot demonstrating GatewayClient usage, including the
+// verbose per-frame debug tracing (RAW FRAME / DISPATCH t=/op=) that
+// previously lived in a second, conflicting copy of GatewayClient in this
+// file. That's gone now — set_debug_logging(true) turns on the same
+// tracing inside the real GatewayClient implementation.
+
 #include "fluxerpp/FluxerClient.h"
-#include "fluxerpp/FluxerConfig.h"
-#include "fluxerpp/RestClient.h"       // add
+#include "fluxerpp/env.h"
+#include "fluxerpp/util/Logger.h"
+#include <cstdlib>
+#include <iostream>
 
 int main() {
-    std::cout << "=== Fluxer++ Ping Bot Debugger ===\n";
+    fluxerpp::load_env();
 
-    // Initialize libcurl once at program start
-    if (curl_global_init(CURL_GLOBAL_DEFAULT) != 0) {
-        std::cerr << "[REST] curl_global_init failed\n";
-        return 1;
-    }
-
-    // Load .env
-    std::cout << "[DEBUG] Loading .env...\n";
-    fluxerpp::load_env(".env");
-
-    const char* raw = std::getenv("TOKEN");
-    std::cout << "[DEBUG] getenv(\"TOKEN\") returned: "
-              << (raw ? raw : "NULL") << "\n";
-
-    if (!raw || std::string(raw).empty()) {
-        std::cerr << "[Fluxer++] ERROR: TOKEN missing in .env\n";
-        curl_global_cleanup();
+    const char* tokenEnv = std::getenv("FLUXER_TOKEN");
+    if (!tokenEnv) {
+        std::cerr << "FLUXER_TOKEN not set (check your .env)\n";
         return 1;
     }
 
     fluxerpp::FluxerConfig cfg;
-    cfg.token = raw;
-    cfg.restBase = "https://api.fluxer.app"; // set your REST base
-
-    std::cout << "[DEBUG] FluxerConfig.token = " << cfg.token << "\n";
+    cfg.token = tokenEnv;
 
     fluxerpp::FluxerClient client(cfg);
 
-    // READY event: send a message when the gateway is ready
-    client.gateway().on_ready([&]() {
-        std::cout << "[Fluxer++] on_ready() invoked\n";
-        std::string channel_id = "1538095086615658496";
+    // Turn on RAW FRAME / DISPATCH tracing for debugging. Off by default.
+    client.gateway().set_debug_logging(true);
+    fluxerpp::util::Logger::instance().set_level(fluxerpp::util::LogLevel::Debug);
 
-        try {
-            fluxerpp::RestClient rc(cfg);
-            nlohmann::json body;
-            body["content"] = "I am alive";
-            auto resp = rc.post("/api/channels/" + channel_id + "/messages", body);
-            std::cout << "[REST] Message post response: " << resp.dump() << "\n";
-        } catch (const std::exception& ex) {
-            std::cerr << "[REST] Failed to post message: " << ex.what() << "\n";
+    client.gateway().on_ready([]() {
+        std::cout << "Ping bot is ready.\n";
+    });
+
+    client.gateway().on_message_create([&client](const nlohmann::json& msg) {
+        if (msg.value("content", "") == "!ping") {
+            auto channel_id = std::stoull(msg.at("channel_id").get<std::string>());
+            try {
+                client.api().post(
+                    "/channels/" + std::to_string(channel_id) + "/messages",
+                    nlohmann::json{{"content", "Pong!"}}
+                );
+            } catch (const std::exception& ex) {
+                std::cerr << "Failed to send pong: " << ex.what() << "\n";
+            }
         }
     });
 
-    client.gateway().on_message_create([&](const nlohmann::json& msg) {
-        try {
-            std::string author = msg.value("author", nlohmann::json::object()).value("username", std::string("unknown"));
-            std::string content = msg.value("content", std::string());
-            std::cout << "[MessageCreate] " << author << ": " << content << "\n";
-        } catch (...) {
-            std::cout << "[MessageCreate] (failed to parse message)\n";
-        }
-    });
-
-    std::cout << "[DEBUG] Calling client.login()...\n";
-    client.login();
-
-    std::cout << "[DEBUG] login() returned — bot may be running async.\n";
-
-    // Program lifetime continues; when exiting, cleanup curl
-    // If your program never returns from login loop, you may not reach this line.
-    curl_global_cleanup();
+    client.login(); // blocks
     return 0;
 }

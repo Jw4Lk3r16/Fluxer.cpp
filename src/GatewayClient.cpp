@@ -1,9 +1,9 @@
 // src/GatewayClient.cpp
 #include "fluxerpp/GatewayClient.h"
+#include "fluxerpp/util/Logger.h"
 #include <windows.h>
 #include <winhttp.h>
 #include <nlohmann/json.hpp>
-#include <iostream>
 #include <thread>
 #include <chrono>
 #include <string>
@@ -16,9 +16,10 @@
 
 namespace fluxerpp {
 
+using util::Logger;
+
 // Helper: send a UTF-8 text message over WinHTTP WebSocket
 static DWORD send_websocket_message(HINTERNET hWebSocket, const std::string& payload) {
-    // WinHttpWebSocketSend expects a void* pointer (non-const), so cast away constness safely here.
     return WinHttpWebSocketSend(
         hWebSocket,
         WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE,
@@ -27,7 +28,8 @@ static DWORD send_websocket_message(HINTERNET hWebSocket, const std::string& pay
     );
 }
 
-// Build IDENTIFY payload (sent after HELLO)
+// Build IDENTIFY payload (sent after HELLO). Never logged in full — see
+// debug_handle_raw_frame below, which only logs t/op, not payload bodies.
 static std::string build_identify(const std::string& token) {
     nlohmann::json identify = {
         {"op", 2},
@@ -44,7 +46,6 @@ static std::string build_identify(const std::string& token) {
     return identify.dump();
 }
 
-// Build RESUME payload
 static std::string build_resume(const std::string& token, const std::string& session_id, int seq) {
     nlohmann::json resume = {
         {"op", 6},
@@ -57,89 +58,37 @@ static std::string build_resume(const std::string& token, const std::string& ses
     return resume.dump();
 }
 
-// Utility: extract complete JSON objects from a buffer string.
-// This scans for balanced braces while respecting string quoting and escapes.
-// Returns vector of JSON strings and leaves any trailing partial data in 'acc'.
-static std::vector<std::string> extract_json_objects(std::string& acc) {
-    std::vector<std::string> out;
-    size_t i = 0;
-    const size_t n = acc.size();
-    while (i < n) {
-        // find first '{'
-        size_t start = acc.find('{', i);
-        if (start == std::string::npos) break;
-
-        int depth = 0;
-        bool in_string = false;
-        bool escape = false;
-        size_t j = start;
-        for (; j < n; ++j) {
-            char c = acc[j];
-            if (in_string) {
-                if (escape) {
-                    escape = false;
-                } else if (c == '\\') {
-                    escape = true;
-                } else if (c == '"') {
-                    in_string = false;
-                }
-            } else {
-                if (c == '"') {
-                    in_string = true;
-                } else if (c == '{') {
-                    ++depth;
-                } else if (c == '}') {
-                    --depth;
-                    if (depth == 0) {
-                        // complete JSON object from start..j
-                        out.emplace_back(acc.substr(start, j - start + 1));
-                        i = j + 1;
-                        break;
-                    }
-                }
-            }
-        }
-        if (j >= n) break; // incomplete
-        // continue scanning from i
-    }
-
-    // Remove consumed prefix from acc
-    if (!out.empty()) {
-        // find the first '{' position
-        size_t first_brace = acc.find('{');
-        if (first_brace != std::string::npos) {
-            // compute consumed length by summing sizes of extracted objects
-            size_t consumed_len = 0;
-            for (const auto& s : out) consumed_len += s.size();
-            acc.erase(0, first_brace + consumed_len);
-        } else {
-            acc.clear();
-        }
-    }
-    return out;
-}
+// NOTE on message reassembly:
+// WinHTTP's WebSocket API can split one logical message across several
+// WinHttpWebSocketReceive calls. It marks every chunk of a message except
+// the last as WINHTTP_WEB_SOCKET_UTF8_FRAGMENT_BUFFER_TYPE, and only the
+// final chunk as WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE. A previous
+// version of this loop only appended bytes to `acc` when it saw the
+// _MESSAGE_ type and used a brace-matching scanner to pull JSON objects out
+// of whatever survived — which silently dropped every FRAGMENT chunk. For
+// small payloads (HELLO) that never showed up; for a large READY payload
+// (guild roles/regions/member profile all nested under "d") most of the
+// message was fragmented and got thrown away, leaving only stray bytes that
+// happened to still parse as small, unrelated-looking JSON objects.
+//
+// aiohttp (and browsers) do this reassembly for you transparently, which is
+// why the Python/JS reference clients just do `json.loads(msg.data)` on one
+// complete message with no manual scanning. We now do the same: accumulate
+// every chunk regardless of FRAGMENT vs MESSAGE type, and only parse+clear
+// `acc` once WinHTTP reports the MESSAGE type, meaning the message is done.
 
 GatewayClient::GatewayClient(const std::string& t)
     : token(t) { }
 
 void GatewayClient::on_ready(const std::function<void()>& cb) {
-    ready_callbacks.push_back(cb);
+    dispatcher.on_ready(cb);
 }
 
 void GatewayClient::on_message_create(const std::function<void(const nlohmann::json&)>& cb) {
-    message_callbacks.push_back(cb);
-}
-
-void GatewayClient::dispatch_ready() {
-    for (auto& cb : ready_callbacks) cb();
-}
-
-void GatewayClient::dispatch_message_create(const nlohmann::json& data) {
-    for (auto& cb : message_callbacks) cb(data);
+    dispatcher.on_message_create(cb);
 }
 
 void GatewayClient::connect() {
-    const int maxReconnectAttempts = 6;
     int reconnectAttempt = 0;
 
     std::string session_id;
@@ -155,7 +104,7 @@ void GatewayClient::connect() {
         );
 
         if (!hSession) {
-            std::cout << "[Gateway] WinHttpOpen failed\n";
+            Logger::instance().error("WinHttpOpen failed");
             return;
         }
 
@@ -167,7 +116,7 @@ void GatewayClient::connect() {
         );
 
         if (!hConnect) {
-            std::cout << "[Gateway] WinHttpConnect failed\n";
+            Logger::instance().error("WinHttpConnect failed");
             WinHttpCloseHandle(hSession);
             return;
         }
@@ -183,21 +132,15 @@ void GatewayClient::connect() {
         );
 
         if (!hRequest) {
-            std::cout << "[Gateway] WinHttpOpenRequest failed\n";
+            Logger::instance().error("WinHttpOpenRequest failed");
             WinHttpCloseHandle(hConnect);
             WinHttpCloseHandle(hSession);
             return;
         }
 
-        BOOL opt = WinHttpSetOption(
-            hRequest,
-            WINHTTP_OPTION_UPGRADE_TO_WEB_SOCKET,
-            NULL,
-            0
-        );
-
+        BOOL opt = WinHttpSetOption(hRequest, WINHTTP_OPTION_UPGRADE_TO_WEB_SOCKET, NULL, 0);
         if (!opt) {
-            std::cout << "[Gateway] Failed to set WebSocket upgrade option\n";
+            Logger::instance().error("Failed to set WebSocket upgrade option");
             WinHttpCloseHandle(hRequest);
             WinHttpCloseHandle(hConnect);
             WinHttpCloseHandle(hSession);
@@ -207,7 +150,7 @@ void GatewayClient::connect() {
         if (!WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                                 WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
             !WinHttpReceiveResponse(hRequest, NULL)) {
-            std::cout << "[Gateway] WebSocket handshake failed\n";
+            Logger::instance().error("WebSocket handshake failed");
             WinHttpCloseHandle(hRequest);
             WinHttpCloseHandle(hConnect);
             WinHttpCloseHandle(hSession);
@@ -218,22 +161,20 @@ void GatewayClient::connect() {
         WinHttpCloseHandle(hRequest);
 
         if (!hWebSocket) {
-            std::cout << "[Gateway] WebSocket upgrade failed\n";
+            Logger::instance().error("WebSocket upgrade failed");
             WinHttpCloseHandle(hConnect);
             WinHttpCloseHandle(hSession);
             return;
         }
 
-        std::cout << "[Gateway] Connected via WinHTTP WebSocket\n";
+        Logger::instance().info("Connected via WinHTTP WebSocket");
 
-        // Receive state
-        std::string acc; // accumulator for text frames
+        std::string acc;
         const size_t BUF_SZ = 16 * 1024;
         std::vector<char> buffer(BUF_SZ);
         DWORD bytesRead = 0;
         WINHTTP_WEB_SOCKET_BUFFER_TYPE bufferType = WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE;
 
-        // Heartbeat state
         std::atomic<int> heartbeat_interval_ms{0};
         std::atomic<bool> heartbeat_running{false};
         std::atomic<bool> stop_heartbeat{false};
@@ -246,10 +187,8 @@ void GatewayClient::connect() {
         WCHAR closeReason[512] = {};
         DWORD closeReasonLength = 0;
 
-        // If we have a session_id, we'll attempt RESUME after HELLO (not before)
         bool want_resume = !session_id.empty();
 
-        // Receive loop
         while (true) {
             DWORD hr = WinHttpWebSocketReceive(
                 hWebSocket,
@@ -260,257 +199,233 @@ void GatewayClient::connect() {
             );
 
             if (hr != NO_ERROR) {
-                std::cout << "[Gateway] Receive failed, code=" << hr << "\n";
+                Logger::instance().warn("Receive failed, code=" + std::to_string(hr));
 
-                // Query close status if available
                 closeStatus = 0;
                 closeReasonLength = sizeof(closeReason);
                 DWORD queryHr = WinHttpWebSocketQueryCloseStatus(
-                    hWebSocket,
-                    &closeStatus,
-                    closeReason,
-                    closeReasonLength,
-                    &closeReasonLength
+                    hWebSocket, &closeStatus, closeReason, closeReasonLength, &closeReasonLength
                 );
-
-                std::cout << "[Gateway] Close status=" << closeStatus << "\n";
-                if (queryHr == NO_ERROR) {
-                    std::wcout << L"[Gateway] Close reason=" << closeReason << L"\n";
-                } else {
-                    std::cout << "[Gateway] Close reason unavailable (queryHr=" << queryHr << ")\n";
+                Logger::instance().warn("Close status=" + std::to_string(closeStatus));
+                if (queryHr != NO_ERROR) {
+                    Logger::instance().warn("Close reason unavailable (queryHr=" + std::to_string(queryHr) + ")");
                 }
 
                 connectionClosed = true;
                 break;
             }
 
-            // Handle control frames
             if (bufferType == WINHTTP_WEB_SOCKET_CLOSE_BUFFER_TYPE) {
                 closeStatus = 0;
                 closeReasonLength = sizeof(closeReason);
-                DWORD queryHr = WinHttpWebSocketQueryCloseStatus(
-                    hWebSocket,
-                    &closeStatus,
-                    closeReason,
-                    closeReasonLength,
-                    &closeReasonLength
+                WinHttpWebSocketQueryCloseStatus(
+                    hWebSocket, &closeStatus, closeReason, closeReasonLength, &closeReasonLength
                 );
-                std::cout << "[Gateway] Received CLOSE frame, status=" << closeStatus << "\n";
-                if (queryHr == NO_ERROR) {
-                    std::wcout << L"[Gateway] Close reason=" << closeReason << L"\n";
-                }
+                Logger::instance().info("Received CLOSE frame, status=" + std::to_string(closeStatus));
                 connectionClosed = true;
                 break;
             }
 
-            if (bufferType == WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE) {
-                // Append received bytes to accumulator
+            if (bufferType == WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE ||
+                bufferType == WINHTTP_WEB_SOCKET_UTF8_FRAGMENT_BUFFER_TYPE) {
                 acc.append(buffer.data(), bytesRead);
 
-                // Extract complete JSON objects (handles fragmentation and multiple objects)
-                auto jsonStrings = extract_json_objects(acc);
-                for (const auto& js : jsonStrings) {
-                    nlohmann::json data;
-                    try {
-                        data = nlohmann::json::parse(js);
-                    } catch (const std::exception& ex) {
-                        std::cout << "[Gateway] JSON parse error: " << ex.what() << "\n";
-                        continue;
-                    }
+                if (bufferType == WINHTTP_WEB_SOCKET_UTF8_FRAGMENT_BUFFER_TYPE) {
+                    // Only part of this message has arrived — keep accumulating
+                    // and wait for the chunk WinHTTP marks as _MESSAGE_ type.
+                    continue;
+                }
 
-                    // Update sequence if present
-                    if (data.contains("s") && !data["s"].is_null()) {
-                        std::lock_guard<std::mutex> lk(seq_mutex);
-                        try {
-                            last_seq = data.value("s", last_seq);
-                        } catch (...) {}
-                    }
+                // _MESSAGE_ type: this was the final chunk, so `acc` now holds
+                // exactly one complete JSON envelope. Take ownership and reset
+                // the accumulator for the next message.
+                std::string js = std::move(acc);
+                acc.clear();
 
-                    int op = data.value("op", -1);
+                if (debug_logging_) {
+                    Logger::instance().debug("RAW FRAME: " + js);
+                }
 
-                    if (op == 10) { // HELLO
-                        int interval = 0;
-                        try {
-                            interval = data["d"].value("heartbeat_interval", 0);
-                        } catch (...) {}
-                        heartbeat_interval_ms.store(interval);
-                        std::cout << "[Gateway] HELLO interval=" << interval << "\n";
+                nlohmann::json data;
+                try {
+                    data = nlohmann::json::parse(js);
+                } catch (const std::exception& ex) {
+                    Logger::instance().warn(std::string("JSON parse error: ") + ex.what());
+                    continue;
+                }
 
-                        // Start heartbeat thread now (but do not send heartbeats until IDENTIFY/RESUME is sent)
-                        if (!heartbeat_running.load()) {
-                            heartbeat_running.store(true);
-                            stop_heartbeat.store(false);
-                            heartbeatThread = std::thread([&]() {
-                                using namespace std::chrono;
-                                int local_interval = heartbeat_interval_ms.load();
-                                if (local_interval <= 0) local_interval = 41250;
-                                // initial sleep half interval to stagger
-                                std::this_thread::sleep_for(milliseconds(local_interval / 2));
-                                while (!stop_heartbeat.load()) {
-                                    // Build heartbeat payload with last_seq (may be -1)
-                                    int seq_snapshot = -1;
-                                    {
-                                        std::lock_guard<std::mutex> lk(seq_mutex);
-                                        seq_snapshot = last_seq;
-                                    }
-                                    nlohmann::json hb;
-                                    hb["op"] = 1;
-                                    if (seq_snapshot == -1) hb["d"] = nullptr;
-                                    else hb["d"] = seq_snapshot;
+                if (data.contains("s") && !data["s"].is_null()) {
+                    std::lock_guard<std::mutex> lk(seq_mutex);
+                    last_seq = data.value("s", last_seq);
+                }
 
-                                    std::string payload = hb.dump();
-                                    DWORD sendHr = send_websocket_message(hWebSocket, payload);
-                                    if (sendHr != NO_ERROR) {
-                                        std::cout << "[Gateway] Heartbeat send failed, code=" << sendHr << "\n";
-                                        break;
-                                    }
-                                    std::cout << "[Gateway] Sent heartbeat\n";
-                                    int sleep_ms = heartbeat_interval_ms.load();
-                                    if (sleep_ms <= 0) sleep_ms = local_interval;
-                                    std::this_thread::sleep_for(milliseconds(sleep_ms));
+                int op = data.value("op", -1);
+
+                if (debug_logging_) {
+                    std::string t = data.value("t", std::string());
+                    Logger::instance().debug("DISPATCH t=" + (t.empty() ? "<none>" : t) +
+                                              " op=" + std::to_string(op));
+                }
+
+                if (op == 10) { // HELLO
+                    int interval = 0;
+                    try { interval = data["d"].value("heartbeat_interval", 0); } catch (...) {}
+                    heartbeat_interval_ms.store(interval);
+                    Logger::instance().info("HELLO interval=" + std::to_string(interval));
+
+                    if (!heartbeat_running.load()) {
+                        heartbeat_running.store(true);
+                        stop_heartbeat.store(false);
+                        heartbeatThread = std::thread([&]() {
+                            using namespace std::chrono;
+                            int local_interval = heartbeat_interval_ms.load();
+                            if (local_interval <= 0) local_interval = 41250;
+                            std::this_thread::sleep_for(milliseconds(local_interval / 2));
+                            while (!stop_heartbeat.load()) {
+                                int seq_snapshot = -1;
+                                {
+                                    std::lock_guard<std::mutex> lk(seq_mutex);
+                                    seq_snapshot = last_seq;
                                 }
-                            });
-                        }
+                                nlohmann::json hb;
+                                hb["op"] = 1;
+                                hb["d"] = (seq_snapshot == -1) ? nlohmann::json(nullptr) : nlohmann::json(seq_snapshot);
 
-                        // After HELLO: attempt RESUME if we have session info, otherwise IDENTIFY
-                        if (want_resume && !identified_or_resumed) {
-                            std::string resumePayload = build_resume(this->token, session_id, last_seq);
-                            DWORD sendHr = send_websocket_message(hWebSocket, resumePayload);
-                            if (sendHr == NO_ERROR) {
-                                std::cout << "[Gateway] Sent RESUME (session_id=" << session_id << ", seq=" << last_seq << ")\n";
-                                identified_or_resumed = true;
-                            } else {
-                                std::cout << "[Gateway] RESUME send failed, code=" << sendHr << " — will IDENTIFY\n";
-                                // fall through to IDENTIFY
+                                DWORD sendHr = send_websocket_message(hWebSocket, hb.dump());
+                                if (sendHr != NO_ERROR) {
+                                    Logger::instance().warn("Heartbeat send failed, code=" + std::to_string(sendHr));
+                                    break;
+                                }
+                                int sleep_ms = heartbeat_interval_ms.load();
+                                if (sleep_ms <= 0) sleep_ms = local_interval;
+                                std::this_thread::sleep_for(milliseconds(sleep_ms));
                             }
-                        }
+                        });
+                    }
 
-                        if (!identified_or_resumed) {
-                            std::string identifyPayload = build_identify(this->token);
-                            DWORD sendHr = send_websocket_message(hWebSocket, identifyPayload);
-                            if (sendHr != NO_ERROR) {
-                                std::cout << "[Gateway] IDENTIFY send failed, code=" << sendHr << "\n";
-                                connectionClosed = true;
-                                break;
-                            }
-                            std::cout << "[Gateway] Sent IDENTIFY\n";
+                    if (want_resume && !identified_or_resumed) {
+                        std::string resumePayload = build_resume(this->token, session_id, last_seq);
+                        DWORD sendHr = send_websocket_message(hWebSocket, resumePayload);
+                        if (sendHr == NO_ERROR) {
+                            Logger::instance().info("Sent RESUME (session_id=" + session_id + ", seq=" + std::to_string(last_seq) + ")");
                             identified_or_resumed = true;
-                        }
-
-                    } else if (op == 0) { // DISPATCH
-                        std::string t = data.value("t", "");
-                        std::cout << "[Gateway] DISPATCH: " << t << "\n";
-
-                        if (t == "READY") {
-                            try {
-                                session_id = data["d"].value("session_id", session_id);
-                            } catch (...) {}
-                            std::cout << "[Gateway] READY received; session_id=" << session_id << "\n";
-                            dispatch_ready();
-                        } else if (t == "MESSAGE_CREATE") {
-                            std::cout << "[Gateway] MESSAGE_CREATE received\n";
-                            try {
-                                dispatch_message_create(data["d"]);
-                            } catch (...) {}
                         } else {
-                            // other dispatch events can be handled here
+                            Logger::instance().warn("RESUME send failed, code=" + std::to_string(sendHr) + " — will IDENTIFY");
                         }
-                    } else if (op == 1) { // Server heartbeat request
-                        // Respond with heartbeat (include last_seq)
-                        int seq_snapshot = -1;
-                        {
-                            std::lock_guard<std::mutex> lk(seq_mutex);
-                            seq_snapshot = last_seq;
-                        }
-                        nlohmann::json hb;
-                        hb["op"] = 1;
-                        if (seq_snapshot == -1) hb["d"] = nullptr;
-                        else hb["d"] = seq_snapshot;
+                    }
 
-                        std::string payload = hb.dump();
-                        DWORD sendHr = send_websocket_message(hWebSocket, payload);
+                    if (!identified_or_resumed) {
+                        std::string identifyPayload = build_identify(this->token);
+                        DWORD sendHr = send_websocket_message(hWebSocket, identifyPayload);
                         if (sendHr != NO_ERROR) {
-                            std::cout << "[Gateway] Heartbeat (response) send failed, code=" << sendHr << "\n";
+                            Logger::instance().error("IDENTIFY send failed, code=" + std::to_string(sendHr));
                             connectionClosed = true;
                             break;
                         }
-                        std::cout << "[Gateway] Responded to server heartbeat request\n";
-                    } else if (op == 7) { // RECONNECT
-                        std::cout << "[Gateway] Server requested reconnect (OP 7)\n";
-                        connectionClosed = true;
-                        break;
-                    } else if (op == 9) { // INVALID SESSION
-                        bool resumable = false;
-                        try {
-                            resumable = data["d"].get<bool>();
-                        } catch (...) {}
-                        std::cout << "[Gateway] INVALID SESSION (resumable=" << (resumable ? "true" : "false") << ")\n";
-                        if (!resumable) {
-                            // clear session info so next connect will IDENTIFY
-                            session_id.clear();
-                            last_seq = -1;
-                        }
-                        // Close and reconnect
-                        connectionClosed = true;
-                        break;
-                    } else if (op == 11) { // HEARTBEAT ACK
-                        std::cout << "[Gateway] Heartbeat ACK\n";
-                        // Could update heartbeat monitoring state here
-                    } else {
-                        // Unhandled op
+                        Logger::instance().info("Sent IDENTIFY (token=" + Logger::redact(this->token) + ")");
+                        identified_or_resumed = true;
                     }
-                } // end for each json string
-            } else if (bufferType == WINHTTP_WEB_SOCKET_BINARY_MESSAGE_BUFFER_TYPE) {
-                // ignore binary frames but do not append to text accumulator
-                continue;
+
+                } else if (op == 0) { // DISPATCH
+                    std::string t = data.value("t", "");
+
+                    if (t == "READY") {
+                        try { session_id = data["d"].value("session_id", session_id); } catch (...) {}
+                        Logger::instance().info("READY received; session_id=" + session_id);
+                        dispatcher.dispatch_ready();
+                    } else if (t == "MESSAGE_CREATE") {
+                        try {
+                            dispatcher.dispatch_message_create(data["d"]);
+                        } catch (const std::exception& ex) {
+                            Logger::instance().error(std::string("MESSAGE_CREATE handling failed: ") + ex.what());
+                        }
+                    }
+                    // other dispatch events: add routing here as needed
+
+                } else if (op == 1) { // Server heartbeat request
+                    int seq_snapshot = -1;
+                    {
+                        std::lock_guard<std::mutex> lk(seq_mutex);
+                        seq_snapshot = last_seq;
+                    }
+                    nlohmann::json hb;
+                    hb["op"] = 1;
+                    hb["d"] = (seq_snapshot == -1) ? nlohmann::json(nullptr) : nlohmann::json(seq_snapshot);
+
+                    DWORD sendHr = send_websocket_message(hWebSocket, hb.dump());
+                    if (sendHr != NO_ERROR) {
+                        Logger::instance().warn("Heartbeat (response) send failed, code=" + std::to_string(sendHr));
+                        connectionClosed = true;
+                        break;
+                    }
+
+                } else if (op == 7) { // RECONNECT
+                    Logger::instance().info("Server requested reconnect (OP 7)");
+                    connectionClosed = true;
+                    break;
+
+                } else if (op == 9) { // INVALID SESSION
+                    bool resumable = false;
+                    try { resumable = data["d"].get<bool>(); } catch (...) {}
+                    Logger::instance().warn(std::string("INVALID SESSION (resumable=") + (resumable ? "true" : "false") + ")");
+                    if (!resumable) {
+                        session_id.clear();
+                        last_seq = -1;
+                    }
+                    connectionClosed = true;
+                    break;
+
+                } else if (op == 11) { // HEARTBEAT ACK
+                    if (debug_logging_) Logger::instance().debug("Heartbeat ACK");
+                }
+
+            } else if (bufferType == WINHTTP_WEB_SOCKET_BINARY_MESSAGE_BUFFER_TYPE ||
+                       bufferType == WINHTTP_WEB_SOCKET_BINARY_FRAGMENT_BUFFER_TYPE) {
+                continue; // binary frames aren't used by this JSON gateway
             } else {
-                // other control frames: ignore
                 continue;
             }
         } // end receive loop
 
-        // Stop heartbeat thread if running
         if (heartbeat_running.load()) {
             stop_heartbeat.store(true);
             if (heartbeatThread.joinable()) heartbeatThread.join();
             heartbeat_running.store(false);
         }
 
-        // Close handles
         WinHttpCloseHandle(hWebSocket);
         WinHttpCloseHandle(hConnect);
         WinHttpCloseHandle(hSession);
 
         if (!connectionClosed) {
-            std::cout << "[Gateway] Connection ended without close status; stopping.\n";
+            Logger::instance().info("Connection ended without close status; stopping.");
             break;
         }
 
-        // Decide reconnect behavior
         bool resumable = false;
         if (closeStatus == 1000) {
-            std::cout << "[Gateway] Normal close (1000). Not reconnecting.\n";
+            Logger::instance().info("Normal close (1000). Not reconnecting.");
             break;
-        } else {
-            if (closeStatus == 4009) resumable = true;
+        } else if (closeStatus == 4009) {
+            resumable = true;
         }
 
         reconnectAttempt++;
-        if (reconnectAttempt > maxReconnectAttempts) {
-            std::cout << "[Gateway] Max reconnect attempts reached (" << maxReconnectAttempts << "). Giving up.\n";
+        if (reconnectAttempt > max_reconnect_attempts) {
+            Logger::instance().error("Max reconnect attempts reached (" + std::to_string(max_reconnect_attempts) + "). Giving up.");
             break;
         }
 
         int backoffSeconds = (1 << (reconnectAttempt - 1));
         if (backoffSeconds > 30) backoffSeconds = 30;
-        std::cout << "[Gateway] Reconnecting in " << backoffSeconds << "s (attempt " << reconnectAttempt << ")\n";
+        Logger::instance().info("Reconnecting in " + std::to_string(backoffSeconds) + "s (attempt " + std::to_string(reconnectAttempt) + ")");
         std::this_thread::sleep_for(std::chrono::seconds(backoffSeconds));
 
         if (!resumable) {
             session_id.clear();
             last_seq = -1;
         } else {
-            std::cout << "[Gateway] Attempting resume on reconnect (session_id=" << session_id << ", seq=" << last_seq << ")\n";
+            Logger::instance().info("Attempting resume on reconnect (session_id=" + session_id + ", seq=" + std::to_string(last_seq) + ")");
         }
     } // end outer reconnect loop
 }

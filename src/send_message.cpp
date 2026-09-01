@@ -1,4 +1,4 @@
-// send_message.cpp  (or paste into ping_bot.cpp)
+// send_message.cpp
 #include <windows.h>
 #include <winhttp.h>
 #include <string>

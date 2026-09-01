@@ -1,7 +1,7 @@
 #pragma once
-#include "RestClient.h"
-#include "GatewayClient.h"
-#include "FluxerConfig.h"
+#include "fluxerpp/RestClient.h"
+#include "fluxerpp/GatewayClient.h"
+#include "fluxerpp/FluxerConfig.h"
 #include <nlohmann/json.hpp>
 
 namespace fluxerpp {
@@ -19,4 +19,4 @@ private:
     GatewayClient gate;
 };
 
-}
+} // namespace fluxerpp
