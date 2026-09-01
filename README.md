@@ -4,6 +4,33 @@
 Fluxer++ is designed for developers who want full control, zero overhead, and maximum performance when interacting with the Fluxer API. The SDK is lightweight, modular, and built with modern C++20 standards.
 
 ---
+## Quick links
+
+### ReadMe
+[Project Structure](https://github.com/Jw4Lk3r16/Fluxer.cpp/blob/main/README.md#-project-structure "File Tree/Hierarchy")
+
+[Installation](https://github.com/Jw4Lk3r16/Fluxer.cpp/blob/main/README.md#-installation "Use Fluxer++")
+
+[Getting Started](https://github.com/Jw4Lk3r16/Fluxer.cpp/blob/main/README.md#-getting-started "New?")
+
+[Rest API Usage](https://github.com/Jw4Lk3r16/Fluxer.cpp/blob/main/README.md#-rest-api-usage "Not Empty")
+
+[Gateway & Events](https://github.com/Jw4Lk3r16/Fluxer.cpp/blob/main/README.md#-gateway--events "Gateway & Events")
+
+[Models](https://github.com/Jw4Lk3r16/Fluxer.cpp/blob/main/README.md#-models "Models")
+
+[Packaging](https://github.com/Jw4Lk3r16/Fluxer.cpp/blob/main/README.md#future-packaging "Packaging")
+
+[Logging](https://github.com/Jw4Lk3r16/Fluxer.cpp/blob/main/README.md#-logging "Logging")
+
+[Problems](https://github.com/Jw4Lk3r16/Fluxer.cpp/blob/main/README.md#%EF%B8%8F-error-handling "Uh Oh")
+
+[Contributing](https://github.com/Jw4Lk3r16/Fluxer.cpp/blob/main/README.md#%EF%B8%8F-contributing "Helper?")
+
+[Licence](https://github.com/Jw4Lk3r16/Fluxer.cpp/blob/main/README.md#-license "Boring")
+
+
+---
 
 ## ✨ Features  
 - **High‑performance C++ core** — optimized for speed and low memory overhead  
