@@ -3,7 +3,12 @@ project(FluxerPP LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-include_directories(${CMAKE_SOURCE_DIR}/include)
+
+# Resolved through CMake's own find machinery instead of hoping a bare
+# "curl" on the linker search path happens to be a compatible libcurl.
+# CURL::libcurl also carries its own include dirs, so nothing extra is
+# needed for <curl/curl.h> anywhere in the codebase.
+find_package(CURL REQUIRED)
 
 # Fluxer++ library
 add_library(fluxerpp
@@ -11,25 +16,56 @@ add_library(fluxerpp
     src/RestClient.cpp
     src/GatewayClient.cpp
     src/EventDispatcher.cpp
-    src/winhttp_send.cpp
+    src/models/Message.cpp
+    src/models/User.cpp
+    src/models/Attachment.cpp
+    src/models/Embed.cpp
+    src/models/Reaction.cpp
+    src/models/File.cpp
+    # NOTE: src/winhttp_send.cpp removed — it was a standalone WinHTTP
+    # sender duplicating what RestClient already does via libcurl, and
+    # nothing in the codebase called into it. Safe to delete from disk;
+    # nothing here references it anymore.
 )
 
-target_link_libraries(fluxerpp
-    winhttp
-    ws2_32
-    curl
+# PUBLIC + generator-expression include dirs, not include_directories().
+# include_directories() only affects targets defined in *this* directory
+# scope and doesn't attach to the fluxerpp target itself — a project doing
+# add_subdirectory(Fluxer.cpp) would not inherit this include path at all,
+# and inside this file CMAKE_SOURCE_DIR would resolve to the *parent*
+# project's source dir once included that way, not this repo's. Every
+# in-repo target below (ping_bot, the smoke test) now gets its include path
+# purely through linking against the fluxerpp target, the same way an
+# external consumer would — nothing here hand-adds include/ anywhere else.
+target_include_directories(fluxerpp
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
 )
 
-# ping_bot example
-add_executable(ping_bot
-    examples/ping_bot.cpp
-)
+if(WIN32)
+    target_link_libraries(fluxerpp PUBLIC winhttp ws2_32)
+endif()
+target_link_libraries(fluxerpp PUBLIC CURL::libcurl)
 
-set_target_properties(ping_bot PROPERTIES LINK_FLAGS "-Wl,-subsystem,console")
+# ping_bot example — builds purely against the fluxerpp target's public
+# interface, same as any external consumer would.
+add_executable(ping_bot examples/ping_bot.cpp)
+target_link_libraries(ping_bot PRIVATE fluxerpp)
 
-target_link_libraries(ping_bot
-    fluxerpp
-    winhttp
-    ws2_32
-    curl
-)
+if(WIN32)
+    set_target_properties(ping_bot PROPERTIES LINK_FLAGS "-Wl,-subsystem,console")
+endif()
+
+# --- Consumer smoke test -------------------------------------------------
+# Not a full separate-repo add_subdirectory test (that needs its own git
+# checkout to exercise the add_subdirectory path properly), but it does
+# prove the fluxerpp *target* — target_link_libraries + the
+# target_include_directories above — actually works for a translation unit
+# that isn't part of this library, with every public header as the first
+# include. See tests/consumer_smoke_test.cpp.
+option(FLUXERPP_BUILD_TESTS "Build the fluxerpp consumer smoke test" ON)
+if(FLUXERPP_BUILD_TESTS)
+    add_executable(fluxerpp_consumer_smoke_test tests/consumer_smoke_test.cpp)
+    target_link_libraries(fluxerpp_consumer_smoke_test PRIVATE fluxerpp)
+endif()
