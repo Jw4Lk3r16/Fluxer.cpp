@@ -3,6 +3,7 @@
 #include <string>
 #include <functional>
 #include <atomic>
+#include <chrono>
 #include <nlohmann/json.hpp>
 #include "fluxerpp/EventDispatcher.h"
 
@@ -37,23 +38,22 @@ public:
     // real-time guarantee.
     void stop();
 
-    // Register latency callback
-    void on_latency(const std::function<void(int)>& cb) {
-        on_latency_cb = cb;
-    }
-
-    // Register heartbeat ACK callback
-    void on_heartbeat_ack(const std::function<void()>& cb) {
-        on_heartbeat_ack_cb = cb;
-    }
-
     // The single source of truth for callbacks — see EventDispatcher.h.
     EventDispatcher dispatcher;
 
     // Convenience wrappers so call sites can keep writing
     // gateway.on_ready(...) instead of gateway.dispatcher.on_ready(...).
+    // on_latency/on_heartbeat_ack go through the same mutex-guarded
+    // EventDispatcher path as everything else here — they previously lived
+    // as raw std::function members on GatewayClient itself, which is a
+    // genuine data race: nothing synchronized a write from on_latency()
+    // (callable from any thread, same as stop()) against a read on the
+    // gateway thread inside HEARTBEAT ACK handling.
     void on_ready(const std::function<void()>& cb);
     void on_message_create(const std::function<void(const nlohmann::json&)>& cb);
+    void on_guild_create(const std::function<void(const models::Guild&)>& cb);
+    void on_latency(const std::function<void(int)>& cb);
+    void on_heartbeat_ack(const std::function<void()>& cb);
 
     // Enables verbose per-frame logging (RAW FRAME / DISPATCH tracer).
     // Off by default — this used to be unconditional std::cout spam.
@@ -84,17 +84,15 @@ private:
     // same atomic exchange, so a concurrent double-close can't happen.
     std::atomic<void*> active_ws_handle_{nullptr};
 
-    // Latency tracking
-    std::atomic<std::chrono::steady_clock::time_point> last_hb_sent{
+    // When the most recent heartbeat was actually sent — updated both by
+    // the scheduled heartbeat loop and by the op-1 (server-requested)
+    // heartbeat send, so a HEARTBEAT ACK's measured latency is correct
+    // regardless of which one it's acking. std::atomic<time_point> is
+    // fine here: steady_clock::time_point is trivially copyable, which is
+    // all std::atomic<T> requires (not necessarily lock-free).
+    std::atomic<std::chrono::steady_clock::time_point> last_hb_sent_{
         std::chrono::steady_clock::now()
     };
-
-    // Callback for latency (ms)
-    std::function<void(int)> on_latency_cb;
-
-    // Callback for heartbeat ACK (optional)
-    std::function<void()> on_heartbeat_ack_cb;
-
 };
 
 } // namespace fluxerpp

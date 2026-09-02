@@ -13,6 +13,7 @@
 #include <vector>
 #include <mutex>
 #include <nlohmann/json.hpp>
+#include "fluxerpp/models/Guild.h"
 
 namespace fluxerpp {
 
@@ -21,17 +22,29 @@ public:
     // Registration
     void on_ready(const std::function<void()>& cb);
     void on_message_create(const std::function<void(const nlohmann::json&)>& cb);
+    void on_guild_create(const std::function<void(const models::Guild&)>& cb);
+    // Fired on every HEARTBEAT ACK with the measured round-trip in ms.
+    void on_latency(const std::function<void(int)>& cb);
+    // Fired on every HEARTBEAT ACK, no payload — for callers that just want
+    // a liveness signal without caring about the exact latency value.
+    void on_heartbeat_ack(const std::function<void()>& cb);
 
     // Invoked by GatewayClient when the corresponding DISPATCH arrives.
     // Exceptions thrown by user callbacks are caught and logged so one
     // misbehaving handler can't kill the receive loop / whole connection.
     void dispatch_ready();
     void dispatch_message_create(const nlohmann::json& data);
+    void dispatch_guild_create(const models::Guild& guild);
+    void dispatch_latency(int ms);
+    void dispatch_heartbeat_ack();
 
 private:
     std::mutex mutex_;
     std::vector<std::function<void()>> ready_callbacks_;
     std::vector<std::function<void(const nlohmann::json&)>> message_callbacks_;
+    std::vector<std::function<void(const models::Guild&)>> guild_create_callbacks_;
+    std::vector<std::function<void(int)>> latency_callbacks_;
+    std::vector<std::function<void()>> heartbeat_ack_callbacks_;
 };
 
 } // namespace fluxerpp

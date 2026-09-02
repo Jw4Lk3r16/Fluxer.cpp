@@ -1,6 +1,7 @@
 // src/GatewayClient.cpp
 #include "fluxerpp/GatewayClient.h"
 #include "fluxerpp/RestClient.h"
+#include "fluxerpp/models/Guild.h"
 #include "fluxerpp/util/Logger.h"
 #include <windows.h>
 #include <winhttp.h>
@@ -169,6 +170,18 @@ void GatewayClient::on_ready(const std::function<void()>& cb) {
 
 void GatewayClient::on_message_create(const std::function<void(const nlohmann::json&)>& cb) {
     dispatcher.on_message_create(cb);
+}
+
+void GatewayClient::on_guild_create(const std::function<void(const models::Guild&)>& cb) {
+    dispatcher.on_guild_create(cb);
+}
+
+void GatewayClient::on_latency(const std::function<void(int)>& cb) {
+    dispatcher.on_latency(cb);
+}
+
+void GatewayClient::on_heartbeat_ack(const std::function<void()>& cb) {
+    dispatcher.on_heartbeat_ack(cb);
 }
 
 void GatewayClient::stop() {
@@ -446,17 +459,16 @@ void GatewayClient::connect() {
 
                                     void* sockRaw = active_ws_handle_.load();
                                     if (!sockRaw) break; // already closed elsewhere
-                                    // inside heartbeat thread loop
-                                    last_hb_sent.store(std::chrono::steady_clock::now());
-
                                     DWORD sendHr = send_websocket_message(static_cast<HINTERNET>(sockRaw), hb.dump());
                                     if (sendHr != NO_ERROR) {
                                         Logger::instance().warn("Heartbeat send failed, code=" + std::to_string(sendHr));
                                         break;
                                     }
-
+                                    // Timestamped right after the confirmed send, not before —
+                                    // hb.dump()'s serialization time shouldn't count toward
+                                    // the latency measured when the ACK comes back.
+                                    last_hb_sent_.store(std::chrono::steady_clock::now());
                                     awaiting_ack.store(true);
-
 
                                     int sleep_ms = heartbeat_interval_ms.load();
                                     if (sleep_ms <= 0) sleep_ms = local_interval;
@@ -508,6 +520,13 @@ void GatewayClient::connect() {
                             } catch (const std::exception& ex) {
                                 Logger::instance().error(std::string("MESSAGE_CREATE handling failed: ") + ex.what());
                             }
+                        } else if (t == "GUILD_CREATE") {
+                            try {
+                                models::Guild guild = models::Guild::from_data(data["d"], rest_);
+                                dispatcher.dispatch_guild_create(guild);
+                            } catch (const std::exception& ex) {
+                                Logger::instance().error(std::string("GUILD_CREATE handling failed: ") + ex.what());
+                            }
                         }
                         // other dispatch events: add routing here as needed
 
@@ -526,6 +545,13 @@ void GatewayClient::connect() {
                             Logger::instance().warn("Heartbeat (response) send failed, code=" + std::to_string(sendHr));
                             connectionClosed = true;
                         } else {
+                            // This is the fix for the bug where a
+                            // server-requested heartbeat's ACK would measure
+                            // latency against whenever the *previous*
+                            // scheduled heartbeat went out, not this one —
+                            // last_hb_sent_ needs updating here too, same as
+                            // the scheduled loop above.
+                            last_hb_sent_.store(std::chrono::steady_clock::now());
                             awaiting_ack.store(true);
                         }
 
@@ -548,25 +574,19 @@ void GatewayClient::connect() {
                         }
                         connectionClosed = true;
 
-                } else if (op == 11) { // HEARTBEAT ACK
-                    awaiting_ack.store(false);
-                    auto now = std::chrono::steady_clock::now();
-                    auto sent = last_hb_sent.load();
-                    int ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - sent).count();
-
-                    if (on_latency_cb) on_latency_cb(ms);
-
-                    if (on_heartbeat_ack_cb) {
-                        try {
-
-                            on_heartbeat_ack_cb();
-                        } catch (...) {
-                            Logger::instance().warn("on_heartbeat_ack callback threw");
-                        }
+                    } else if (op == 11) { // HEARTBEAT ACK
+                        awaiting_ack.store(false);
+                        auto now = std::chrono::steady_clock::now();
+                        auto sent = last_hb_sent_.load();
+                        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - sent).count();
+                        // Routed through EventDispatcher (mutex-guarded,
+                        // per-callback try/catch) rather than invoking raw
+                        // std::function members directly — see the header
+                        // comment on why the previous version was a data race.
+                        dispatcher.dispatch_latency(static_cast<int>(ms));
+                        dispatcher.dispatch_heartbeat_ack();
+                        if (debug_logging_) Logger::instance().debug("Heartbeat ACK");
                     }
-
-                    if (debug_logging_) Logger::instance().debug("Heartbeat ACK");
-                }
 
                 } catch (const std::exception& ex) {
                     Logger::instance().warn(std::string("Failed to handle message: ") + ex.what());
