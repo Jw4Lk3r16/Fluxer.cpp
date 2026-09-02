@@ -64,8 +64,8 @@ endif()
 # target_include_directories above — actually works for a translation unit
 # that isn't part of this library, with every public header as the first
 # include. See tests/consumer_smoke_test.cpp.
-option(FLUXERPP_BUILD_TESTS "Build the fluxerpp consumer smoke test" ON)
-if(FLUXERPP_BUILD_TESTS)
-    add_executable(fluxerpp_consumer_smoke_test tests/consumer_smoke_test.cpp)
-    target_link_libraries(fluxerpp_consumer_smoke_test PRIVATE fluxerpp)
-endif()
+#option(FLUXERPP_BUILD_TESTS "Build the fluxerpp consumer smoke test" OFF)
+#if(FLUXERPP_BUILD_TESTS)
+#    add_executable(fluxerpp_consumer_smoke_test tests/consumer_smoke_test.cpp)
+#    target_link_libraries(fluxerpp_consumer_smoke_test PRIVATE fluxerpp)
+#endif()

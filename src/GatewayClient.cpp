@@ -446,12 +446,17 @@ void GatewayClient::connect() {
 
                                     void* sockRaw = active_ws_handle_.load();
                                     if (!sockRaw) break; // already closed elsewhere
+                                    // inside heartbeat thread loop
+                                    last_hb_sent.store(std::chrono::steady_clock::now());
+
                                     DWORD sendHr = send_websocket_message(static_cast<HINTERNET>(sockRaw), hb.dump());
                                     if (sendHr != NO_ERROR) {
                                         Logger::instance().warn("Heartbeat send failed, code=" + std::to_string(sendHr));
                                         break;
                                     }
+
                                     awaiting_ack.store(true);
+
 
                                     int sleep_ms = heartbeat_interval_ms.load();
                                     if (sleep_ms <= 0) sleep_ms = local_interval;
@@ -543,10 +548,25 @@ void GatewayClient::connect() {
                         }
                         connectionClosed = true;
 
-                    } else if (op == 11) { // HEARTBEAT ACK
-                        awaiting_ack.store(false);
-                        if (debug_logging_) Logger::instance().debug("Heartbeat ACK");
+                } else if (op == 11) { // HEARTBEAT ACK
+                    awaiting_ack.store(false);
+                    auto now = std::chrono::steady_clock::now();
+                    auto sent = last_hb_sent.load();
+                    int ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - sent).count();
+
+                    if (on_latency_cb) on_latency_cb(ms);
+
+                    if (on_heartbeat_ack_cb) {
+                        try {
+
+                            on_heartbeat_ack_cb();
+                        } catch (...) {
+                            Logger::instance().warn("on_heartbeat_ack callback threw");
+                        }
                     }
+
+                    if (debug_logging_) Logger::instance().debug("Heartbeat ACK");
+                }
 
                 } catch (const std::exception& ex) {
                     Logger::instance().warn(std::string("Failed to handle message: ") + ex.what());

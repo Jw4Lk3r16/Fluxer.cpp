@@ -37,6 +37,16 @@ public:
     // real-time guarantee.
     void stop();
 
+    // Register latency callback
+    void on_latency(const std::function<void(int)>& cb) {
+        on_latency_cb = cb;
+    }
+
+    // Register heartbeat ACK callback
+    void on_heartbeat_ack(const std::function<void()>& cb) {
+        on_heartbeat_ack_cb = cb;
+    }
+
     // The single source of truth for callbacks — see EventDispatcher.h.
     EventDispatcher dispatcher;
 
@@ -73,6 +83,18 @@ private:
     // stop() and the heartbeat thread's missed-ACK path close this via the
     // same atomic exchange, so a concurrent double-close can't happen.
     std::atomic<void*> active_ws_handle_{nullptr};
+
+    // Latency tracking
+    std::atomic<std::chrono::steady_clock::time_point> last_hb_sent{
+        std::chrono::steady_clock::now()
+    };
+
+    // Callback for latency (ms)
+    std::function<void(int)> on_latency_cb;
+
+    // Callback for heartbeat ACK (optional)
+    std::function<void()> on_heartbeat_ack_cb;
+
 };
 
 } // namespace fluxerpp
