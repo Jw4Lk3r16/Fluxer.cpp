@@ -2,6 +2,7 @@
 #include "fluxerpp/GatewayClient.h"
 #include "fluxerpp/RestClient.h"
 #include "fluxerpp/models/Guild.h"
+#include "fluxerpp/models/Message.h"
 #include "fluxerpp/util/Logger.h"
 #include <windows.h>
 #include <winhttp.h>
@@ -168,7 +169,7 @@ void GatewayClient::on_ready(const std::function<void()>& cb) {
     dispatcher.on_ready(cb);
 }
 
-void GatewayClient::on_message_create(const std::function<void(const nlohmann::json&)>& cb) {
+void GatewayClient::on_message_create(const std::function<void(const models::Message&)>& cb) {
     dispatcher.on_message_create(cb);
 }
 
@@ -516,7 +517,8 @@ void GatewayClient::connect() {
                             dispatcher.dispatch_ready();
                         } else if (t == "MESSAGE_CREATE") {
                             try {
-                                dispatcher.dispatch_message_create(data["d"]);
+                                models::Message msg = models::Message::from_data(data["d"], rest_);
+                                dispatcher.dispatch_message_create(msg);
                             } catch (const std::exception& ex) {
                                 Logger::instance().error(std::string("MESSAGE_CREATE handling failed: ") + ex.what());
                             }

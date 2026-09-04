@@ -6,6 +6,8 @@
 #include <chrono>
 #include <nlohmann/json.hpp>
 #include "fluxerpp/EventDispatcher.h"
+#include "fluxerpp/models/Message.h"
+#include "fluxerpp/models/Guild.h"
 
 namespace fluxerpp {
 
@@ -50,7 +52,7 @@ public:
     // (callable from any thread, same as stop()) against a read on the
     // gateway thread inside HEARTBEAT ACK handling.
     void on_ready(const std::function<void()>& cb);
-    void on_message_create(const std::function<void(const nlohmann::json&)>& cb);
+    void on_message_create(const std::function<void(const models::Message&)>& cb);
     void on_guild_create(const std::function<void(const models::Guild&)>& cb);
     void on_latency(const std::function<void(int)>& cb);
     void on_heartbeat_ack(const std::function<void()>& cb);

@@ -186,6 +186,14 @@ nlohmann::json RestClient::send_message(std::uint64_t channel_id, const nlohmann
     return post("/channels/" + std::to_string(channel_id) + "/messages", payload);
 }
 
+nlohmann::json RestClient::send_message(std::uint64_t channel_id, const std::string& content) {
+    return send_message(channel_id, nlohmann::json{{"content", content}});
+}
+
+nlohmann::json RestClient::send_message(std::uint64_t channel_id, const char* content) {
+    return send_message(channel_id, std::string(content));
+}
+
 nlohmann::json RestClient::edit_message(std::uint64_t channel_id, std::uint64_t message_id,
                                         const nlohmann::json& payload) {
     return patch("/channels/" + std::to_string(channel_id) + "/messages/" + std::to_string(message_id), payload);

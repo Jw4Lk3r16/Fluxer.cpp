@@ -2,6 +2,7 @@
 // fluxerpp/models/Embed.h
 #include <string>
 #include <optional>
+#include <vector>
 #include "fluxerpp/util/Json.h" // NOTE: previously used util::Json without including this — flagged in review item 1.
 #include "fluxerpp/models/EmbedField.h"
 #include "fluxerpp/models/EmbedVideo.h"

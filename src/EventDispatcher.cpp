@@ -10,7 +10,7 @@ void EventDispatcher::on_ready(const std::function<void()>& cb) {
     ready_callbacks_.push_back(cb);
 }
 
-void EventDispatcher::on_message_create(const std::function<void(const nlohmann::json&)>& cb) {
+void EventDispatcher::on_message_create(const std::function<void(const models::Message&)>& cb) {
     std::lock_guard<std::mutex> lk(mutex_);
     message_callbacks_.push_back(cb);
 }
@@ -47,15 +47,15 @@ void EventDispatcher::dispatch_ready() {
     }
 }
 
-void EventDispatcher::dispatch_message_create(const nlohmann::json& data) {
-    std::vector<std::function<void(const nlohmann::json&)>> callbacks;
+void EventDispatcher::dispatch_message_create(const models::Message& message) {
+    std::vector<std::function<void(const models::Message&)>> callbacks;
     {
         std::lock_guard<std::mutex> lk(mutex_);
         callbacks = message_callbacks_;
     }
     for (auto& cb : callbacks) {
         try {
-            cb(data);
+            cb(message);
         } catch (const std::exception& ex) {
             Logger::instance().error(std::string("on_message_create callback threw: ") + ex.what());
         } catch (...) {

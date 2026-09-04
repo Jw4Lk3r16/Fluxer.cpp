@@ -111,7 +111,7 @@ Message Message::send(
     const std::optional<File>& file,
     const std::optional<std::vector<File>>& files,
     const Json& extra
-) {
+) const {
     if (!rest_) {
         throw std::runtime_error("Message is not bound to a RestClient");
     }
@@ -136,7 +136,7 @@ Message Message::reply(
     const std::optional<File>& file,
     const std::optional<std::vector<File>>& files,
     const Json& extra
-) {
+) const {
     if (!rest_) {
         throw std::runtime_error("Message is not bound to a RestClient");
     }
@@ -162,6 +162,10 @@ Message Message::reply(
     return msg;
 }
 
+Message Message::reply(const Embed& embed, const Json& extra) const {
+    return reply(std::nullopt, embed, std::nullopt, std::nullopt, std::nullopt, extra);
+}
+
 Message Message::send_to_channel(
     std::uint64_t target_channel_id,
     const std::optional<std::string>& content,
@@ -170,7 +174,7 @@ Message Message::send_to_channel(
     const std::optional<File>& file,
     const std::optional<std::vector<File>>& files,
     const Json& extra
-) {
+) const {
     if (!rest_) {
         throw std::runtime_error("Message is not bound to a RestClient");
     }
@@ -190,7 +194,7 @@ Message Message::send_to_channel(
 Message Message::edit(
     const std::optional<std::string>& content,
     const Json& extra
-) {
+) const {
     if (!rest_) {
         throw std::runtime_error("Message is not bound to a RestClient");
     }
@@ -206,50 +210,50 @@ Message Message::edit(
     return msg;
 }
 
-void Message::delete_message() {
+void Message::delete_message() const {
     if (!rest_) {
         throw std::runtime_error("Message is not bound to a RestClient");
     }
     rest_->delete_message(channel_id, id);
 }
 
-void Message::add_reaction(const std::string& emoji) {
+void Message::add_reaction(const std::string& emoji) const {
     if (!rest_) {
         throw std::runtime_error("Message is not bound to a RestClient");
     }
     rest_->add_reaction(channel_id, id, emoji);
 }
 
-void Message::add_reaction(const PartialEmoji& emoji) {
+void Message::add_reaction(const PartialEmoji& emoji) const {
     add_reaction(emoji.to_string());
 }
 
-void Message::remove_reaction(const std::string& emoji, const std::string& user) {
+void Message::remove_reaction(const std::string& emoji, const std::string& user) const {
     if (!rest_) {
         throw std::runtime_error("Message is not bound to a RestClient");
     }
     rest_->delete_reaction(channel_id, id, emoji, user);
 }
 
-void Message::remove_reaction(const PartialEmoji& emoji, const std::string& user) {
+void Message::remove_reaction(const PartialEmoji& emoji, const std::string& user) const {
     remove_reaction(emoji.to_string(), user);
 }
 
-void Message::clear_reactions() {
+void Message::clear_reactions() const {
     if (!rest_) {
         throw std::runtime_error("Message is not bound to a RestClient");
     }
     rest_->delete_all_reactions(channel_id, id);
 }
 
-void Message::clear_reaction(const std::string& emoji) {
+void Message::clear_reaction(const std::string& emoji) const {
     if (!rest_) {
         throw std::runtime_error("Message is not bound to a RestClient");
     }
     rest_->delete_all_reactions_for_emoji(channel_id, id, emoji);
 }
 
-void Message::clear_reaction(const PartialEmoji& emoji) {
+void Message::clear_reaction(const PartialEmoji& emoji) const {
     clear_reaction(emoji.to_string());
 }
 

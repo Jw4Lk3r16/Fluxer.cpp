@@ -20,6 +20,12 @@ add_library(fluxerpp
     src/models/User.cpp
     src/models/Attachment.cpp
     src/models/Embed.cpp
+    src/models/EmbedAuthor.cpp
+    src/models/EmbedField.cpp
+    src/models/EmbedFooter.cpp
+    src/models/EmbedImage.cpp
+    src/models/EmbedThumbnail.cpp
+    src/models/EmbedVideo.cpp
     src/models/Reaction.cpp
     src/models/File.cpp
     src/models/Channel.cpp

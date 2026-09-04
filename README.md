@@ -1,75 +1,56 @@
 # Fluxer++
-**Fluxer++** is a native **C++ SDK** for building fast, reliable Fluxer bots. It provides a modern REST client, real‑time gateway handling, type‑safe models, and an event‑driven architecture designed for high‑performance applications on the Fluxer platform.
+**Fluxer++** is a native **C++ SDK** for building fast, reliable Fluxer bots. It provides a REST client, real‑time gateway handling, type‑safe models, and an event‑driven architecture on top of modern C++20.
 
-Fluxer++ is designed for developers who want full control, zero overhead, and maximum performance when interacting with the Fluxer API. The SDK is lightweight, modular, and built with modern C++20 standards.
+Fluxer++ is a young, in-progress SDK — this README describes what actually exists and compiles today, not the eventual feature set. See [Bottlenecks](#-bottlenecks) for known gaps.
 
 ---
 ## Quick links
 
-### ReadMe
-[Project Structure](https://github.com/Jw4Lk3r16/Fluxer.cpp/blob/main/README.md#-project-structure "File Tree/Hierarchy")
-
-[Installation](https://github.com/Jw4Lk3r16/Fluxer.cpp/blob/main/README.md#-installation "Use Fluxer++")
-
-[Getting Started](https://github.com/Jw4Lk3r16/Fluxer.cpp/blob/main/README.md#-getting-started "New?")
-
-[Rest API Usage](https://github.com/Jw4Lk3r16/Fluxer.cpp/blob/main/README.md#-rest-api-usage "Not Empty")
-
-[Gateway & Events](https://github.com/Jw4Lk3r16/Fluxer.cpp/blob/main/README.md#-gateway--events "Gateway & Events")
-
-[Models](https://github.com/Jw4Lk3r16/Fluxer.cpp/blob/main/README.md#-models "Models")
-
-[Packaging](https://github.com/Jw4Lk3r16/Fluxer.cpp/blob/main/README.md#future-packaging "Packaging")
-
-[Logging](https://github.com/Jw4Lk3r16/Fluxer.cpp/blob/main/README.md#-logging "Logging")
-
-[Problems](https://github.com/Jw4Lk3r16/Fluxer.cpp/blob/main/README.md#%EF%B8%8F-error-handling "Uh Oh")
-
-[Contributing](https://github.com/Jw4Lk3r16/Fluxer.cpp/blob/main/README.md#%EF%B8%8F-contributing "Helper?")
-
-[Licence](https://github.com/Jw4Lk3r16/Fluxer.cpp/blob/main/README.md#-license "Boring")
-
+[Project Structure](#-project-structure) · [Installation](#-installation) · [Getting Started](#-getting-started) · [REST API Usage](#-rest-api-usage) · [Gateway & Events](#-gateway--events) · [Models](#-models) · [Logging](#-logging) · [Error Handling](#-error-handling) · [Bottlenecks](#-bottlenecks) · [Contributing](#-contributing) · [License](#-license)
 
 ---
 
-## ✨ Features  
-- **High‑performance C++ core** — optimized for speed and low memory overhead  
-- **Event‑driven gateway** — register callbacks for ready, message events, reactions, and more  
-- **Modern REST client** — simple JSON‑based request/response handling  
-- **Type‑safe models** — Message, User, Channel, Guild, Role, Member, etc.  
-- **Modular architecture** — clean separation of gateway, REST, events, and models  
-- **Easy integration** — drop‑in headers and CMake support  
-- **UCRT64‑compatible** — built with MSYS2 UCRT64 toolchain  
-- **Examples included** — ping bot, echo bot, and minimal gateway usage  
+## ✨ Features
+- **C++20 core**, built and tested against MSYS2 UCRT64 + libcurl + WinHTTP
+- **Event‑driven gateway** — register callbacks for ready, message creation, guild creation, and heartbeat latency
+- **REST client** — JSON‑based request/response over libcurl, with automatic one-time retry on HTTP 429
+- **Type‑safe models** — Message, User, Channel, Guild, Role, Member, Embed (with author/footer/image/thumbnail/video sub-objects), Attachment, File, PartialEmoji, Reaction
+- **Modular architecture** — gateway, REST, event dispatch, and models are separate, independently testable pieces
+- **CMake target interface** — `target_link_libraries(your_target fluxerpp)` is all a consumer needs; no manual include-path wiring
+- **Windows-only for now** — see [Bottlenecks](#-bottlenecks)
 
 ---
 
-## 📁 Project Structure  
+## 📁 Project Structure
 ```
 fluxerpp/
 │
 ├── include/
-│   ├── FluxerClient.h
-│   ├── RestClient.h
-│   ├── GatewayClient.h
-│   ├── EventDispatcher.h
 │   └── fluxerpp/
+│       ├── FluxerClient.h
+│       ├── FluxerConfig.h
+│       ├── RestClient.h
+│       ├── GatewayClient.h
+│       ├── EventDispatcher.h
+│       ├── env.h
 │       ├── models/
 │       │   ├─ Message.h
 │       │   ├─ User.h
-│       │   ├─ Embed.h
-│       │   ├─ Reaction.h
 │       │   ├─ Attachment.h
+│       │   ├─ Embed.h
+│       │   ├─ EmbedAuthor.h
+│       │   ├─ EmbedField.h
+│       │   ├─ EmbedFooter.h
+│       │   ├─ EmbedImage.h
+│       │   ├─ EmbedThumbnail.h
+│       │   ├─ EmbedVideo.h
+│       │   ├─ Reaction.h
 │       │   ├─ PartialEmoji.h
 │       │   ├─ File.h
 │       │   ├─ Channel.h
 │       │   ├─ Guild.h
-│       │   ├─ Profile.h
 │       │   ├─ Role.h
-│       │   ├─ Member.h
-│       │   ├─ Voice.h
-│       │   ├─ Webhook.h
-│       │   └─ __init__.h
+│       │   └─ Member.h
 │       └── util/
 │           ├── Json.h
 │           └── Logger.h
@@ -79,55 +60,69 @@ fluxerpp/
 │   ├── RestClient.cpp
 │   ├── GatewayClient.cpp
 │   ├── EventDispatcher.cpp
-│   ├── models/
-│   │   ├─ Message.cpp
-│   │   ├─ User.cpp
-│   │   ├─ Embed.cpp
-│   │   ├─ Reaction.cpp
-│   │   ├─ Attachment.cpp
-│   │   ├─ PartialEmoji.cpp
-│   │   ├─ File.cpp
-│   │   ├─ Channel.cpp
-│   │   ├─ Guild.cpp
-│   │   ├─ Profile.cpp
-│   │   ├─ Role.cpp
-│   │   ├─ Member.cpp
-│   │   ├─ Voice.cpp
-│   │   ├─ Webhook.cpp
-│   │   └─ __init__.cpp
+│   └── models/
+│       ├─ Message.cpp
+│       ├─ User.cpp
+│       ├─ Attachment.cpp
+│       ├─ Embed.cpp
+│       ├─ EmbedAuthor.cpp
+│       ├─ EmbedField.cpp
+│       ├─ EmbedFooter.cpp
+│       ├─ EmbedImage.cpp
+│       ├─ EmbedThumbnail.cpp
+│       ├─ EmbedVideo.cpp
+│       ├─ Reaction.cpp
+│       ├─ File.cpp
+│       ├─ Channel.cpp
+│       ├─ Guild.cpp
+│       ├─ Role.cpp
+│       └─ Member.cpp
 │
 ├── examples/
-│   ├── ping_bot.cpp
-│   └── echo_bot.cpp
+│   └── ping_bot.cpp
+│
+├── tests/
+│   └── consumer_smoke_test.cpp
 │
 └── CMakeLists.txt
 ```
+`PartialEmoji` is header-only (no `.cpp`) — every method is small enough to stay inline.
+
+> **Note:** if your checked-in repo still has a root-level `include/EventDispatcher.h` alongside `include/fluxerpp/EventDispatcher.h`, delete the root one — only the `fluxerpp/`-prefixed path is real. A `builders/` directory (starting with `EmbedVideoBuilder`) also exists in-progress and isn't reflected in this tree yet.
 
 ---
 
-## 🔧 Installation  
-Fluxer++ is currently built using **UCRT64** (MSYS2).  
-Precompiled binaries will be available soon.
+## 🔧 Installation
+Fluxer++ currently builds on **UCRT64** (MSYS2) with **libcurl** and **WinHTTP**. Precompiled binaries aren't available yet.
 
-### Clone the repository  
+### Clone the repository
 ```
 git clone https://github.com/Jw4Lk3r16/Fluxer.cpp
 ```
 
-### Build with CMake  
+### Build with CMake
 ```
 mkdir build
 cd build
 cmake ..
 cmake --build .
 ```
+This also builds `fluxerpp_consumer_smoke_test`, a small executable that proves the `fluxerpp` CMake target actually links for code outside the library (set `-DFLUXERPP_BUILD_TESTS=OFF` to skip it).
+
+### Using Fluxer++ in your own CMake project
+```cmake
+add_subdirectory(path/to/Fluxer.cpp)
+target_link_libraries(your_target PRIVATE fluxerpp)
+```
+That's the whole integration — `target_include_directories` on the `fluxerpp` target handles the include path for you.
 
 ---
 
-## 🚀 Getting Started  
-### Minimal Bot Example  
+## 🚀 Getting Started
+### Minimal Bot Example
 ```cpp
 #include "fluxerpp/FluxerClient.h"
+#include <iostream>
 
 int main() {
     fluxerpp::FluxerConfig cfg;
@@ -135,81 +130,74 @@ int main() {
 
     fluxerpp::FluxerClient client(cfg);
 
-    client.gate.on_ready([&]() {
+    client.gateway().on_ready([]() {
         std::cout << "Bot is online!\n";
     });
 
-    client.login();
+    client.login(); // blocks — runs the gateway connect/heartbeat/reconnect loop
 }
 ```
+`client.gate` from earlier drafts of this README was never public — the accessor is `client.gateway()`.
 
 ---
 
-## 🌐 REST API Usage  
-Fluxer++ exposes a simple JSON‑based REST interface:
-
+## 🌐 REST API Usage
 ```cpp
-client.api().send_message(channel_id, {
+client.api().send_message(channel_id, nlohmann::json{
     {"content", "Hello from Fluxer++!"}
 });
 ```
 
-Supported operations include:
+Currently implemented:
+- Sending, editing, and deleting messages
+- Adding/removing a reaction, clearing one emoji's reactions, or clearing all reactions on a message
+- Pinning / unpinning messages
+- Fetching the bot's own user ID (`RestClient::user_id()` — cached after the first call)
+- Any other authenticated route via the generic `get()` / `post()` / `patch()` / `del()` methods
 
-- Sending messages  
-- Editing messages  
-- Deleting messages  
-- Managing channels  
-- Managing guilds  
-- Webhooks  
-- File uploads  
+**Not implemented yet** (earlier drafts of this README claimed these — they don't exist): dedicated channel management, guild management, or webhook endpoints. `File::to_dict()` also can't actually carry binary bytes over JSON yet — real attachment upload needs multipart/form-data support in `RestClient`, which isn't built.
 
 ---
 
-## 🔌 Gateway & Events  
-Fluxer++ uses an event dispatcher to handle gateway events:
-
-### Registering events  
+## 🔌 Gateway & Events
 ```cpp
-client.gate.on_message_create([&](const fluxerpp::Message& msg) {
-    std::cout << "Received: " << msg.content << "\n";
+client.gateway().on_message_create([](const nlohmann::json& msg) {
+    std::cout << "Received: " << msg.value("content", "") << "\n";
+});
+
+client.gateway().on_guild_create([](const fluxerpp::models::Guild& guild) {
+    std::cout << "Guild ready: " << guild.name << " (" << guild.channels.size() << " channels)\n";
+});
+
+client.gateway().on_latency([](int ms) {
+    std::cout << "Heartbeat latency: " << ms << "ms\n";
 });
 ```
 
-Available events include:
+**Currently implemented events:**
+- `on_ready()`
+- `on_message_create(const nlohmann::json&)` — hands back the raw gateway payload; it is **not** hydrated into a `fluxerpp::models::Message` yet, despite that model existing
+- `on_guild_create(const fluxerpp::models::Guild&)` — this one *is* fully parsed into the model
+- `on_latency(int ms)` — fires on every heartbeat ACK with the measured round-trip
+- `on_heartbeat_ack()` — fires on every heartbeat ACK with no payload, for callers that just want a liveness signal
 
-- `on_ready`  
-- `on_message_create`  
-- `on_message_update`  
-- `on_message_delete`  
-- `on_reaction_add`  
-- `on_reaction_remove`  
-- `on_member_join`  
-- `on_member_leave`  
-- `on_typing_start`  
-- and more…
+**Not implemented yet:** `on_message_update`, `on_message_delete`, `on_reaction_add`, `on_reaction_remove`, `on_member_join`, `on_member_leave`, `on_typing_start`, and anything else beyond the five above. `GatewayClient` also has no persistent guild/channel cache — `on_guild_create` hands you a `Guild` for that one event only; nothing stores it for later lookup.
 
 ---
 
-## 🧱 Models  
-Fluxer++ provides strongly‑typed models for all major Fluxer objects:
+## 🧱 Models
+- **Message** — content, embeds, attachments, mentions, reactions (see the `on_message_create` caveat above — not yet produced by the gateway)
+- **User** — id, username, discriminator, global_name, avatar, bot
+- **Channel** — id, type, position, permission overwrites, voice-specific fields
+- **Guild** — id, name, owner, features, roles, channels, members
+- **Role** — id, name, color, position, permissions bitfield
+- **Member** — a `User` plus guild-specific fields (nick, role ids, joined_at, deaf/mute)
+- **Embed** — title, description, color, fields, plus `EmbedAuthor`, `EmbedFooter`, `EmbedImage`, `EmbedThumbnail`, and `EmbedVideo` sub-objects
+- **Attachment** — filename, content type, size, URL
+- **File** — local file wrapper for `Message::send()`'s file parameter; see the REST section above for its current limitation
+- **PartialEmoji** / **Reaction** — reaction-related types, including custom vs. unicode emoji handling
 
-- **Message** — content, embeds, attachments  
-- **User** — username, avatar, flags  
-- **Channel** — type, permissions  
-- **Guild** — roles, members, settings  
-- **Role** — permissions, color  
-- **Member** — user + guild metadata  
-- **Embed** — title, description, fields  
-- **Webhook** — execute, modify, delete  
-- **File** — uploadable binary data  
-
-Each model includes:
-
-- JSON parsing  
-- JSON serialization  
-- Utility helpers  
-- Safe accessors  
+Each model has a `from_data(const util::Json&)` static factory, and the ones used in outgoing requests (`Embed`, `File`) have a matching `to_dict()`.
 
 ---
 ## Future packaging
@@ -225,61 +213,67 @@ Each model includes:
 | Single‑header | Beginners |
 | NuGet | Visual Studio users |
 
+None of these exist yet — today, `add_subdirectory` + `target_link_libraries` (see [Installation](#-installation)) is the only supported integration path.
+
 ---
 
-## 📜 Logging  
-Fluxer++ includes a lightweight logger:
-
+## 📜 Logging
 ```cpp
-fluxerpp::Logger::info("Gateway connected");
-fluxerpp::Logger::error("Failed to parse JSON");
+#include "fluxerpp/util/Logger.h"
+
+using fluxerpp::util::Logger;
+using fluxerpp::util::LogLevel;
+
+Logger::instance().set_level(LogLevel::Debug); // default level is Info
+Logger::instance().info("Gateway connected");
+Logger::instance().error("Failed to parse JSON");
 ```
-
-Log levels:
-
-- Info  
-- Warning  
-- Error  
-- Debug  
+`Logger` is a singleton (`Logger::instance()`), not static free functions. Levels, in order: `Debug`, `Info`, `Warn`, `Error`, `Silent`. `GatewayClient::set_debug_logging(true)` turns on verbose per-frame `RAW FRAME` / `DISPATCH` tracing at the `Debug` level. Secrets (bot token, Authorization headers) are redacted before anything is logged, even at `Debug`.
 
 ---
 
-## ⚠️ Error Handling  
-REST and gateway operations return structured error objects:
+## ⚠️ Error Handling
+There's no `Result`/`ok()`/`error()` wrapper — `RestClient` methods return `nlohmann::json` directly on success and throw `std::runtime_error` on failure:
 
 ```cpp
-auto res = client.api().send_message(...);
-
-if (!res.ok()) {
-    std::cerr << res.error().message << "\n";
+try {
+    client.api().send_message(channel_id, nlohmann::json{{"content", "hi"}});
+} catch (const std::exception& ex) {
+    std::cerr << "Send failed: " << ex.what() << "\n";
 }
 ```
----
-## ⚠️ Bottles Necks
-
-**This SDK only supports windows** at the moment but in the near future **we __will__ migrate to a cross-platform build**.
-
-It is not fully developed yet expect it to be nearing completion in a week or two.
+A `429` response is retried once automatically (honoring `Retry-After`) before this throws — you only see the exception if the retry also fails or the response was some other non‑2xx status.
 
 ---
+## ⚠️ Bottlenecks
 
-## 🛠️ Contributing  
-Contributions are welcome!  
-You can help by:
+**This SDK only supports Windows** at the moment — the gateway transport is WinHTTP-specific. A cross-platform migration (likely IXWebSocket or Boost.Beast for the gateway, keeping libcurl for REST, which is already cross-platform) is planned but not started.
 
-- Improving documentation  
-- Adding more examples  
-- Implementing additional gateway events  
-- Enhancing model coverage  
-- Optimizing performance  
+Other known gaps, tracked so they don't get lost:
+- No persistent guild/channel cache on `FluxerClient`
+- `on_message_create` doesn't hydrate a `Message` model
+- No multipart file upload support
+- Test coverage is one consumer smoke test — no unit tests for gateway protocol transitions or REST edge cases yet
+
+---
+
+## 🛠️ Contributing
+Contributions are welcome! You can help by:
+
+- Improving documentation
+- Adding more examples
+- Implementing additional gateway events
+- Enhancing model coverage
+- Adding real test coverage
+- Working toward cross-platform support
 
 Open a pull request or create an issue on GitHub.
 
 ---
 
-## 📄 License  
+## 📄 License
 Fluxer++ is licensed under MIT.
 
 ---
 
-[Back to top](https://github.com/Jw4Lk3r16/Fluxer.cpp/blob/main/README.md#fluxer "Back to top")
+[Back to top](#fluxer)

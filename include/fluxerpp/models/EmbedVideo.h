@@ -1,5 +1,6 @@
 #pragma once
 // fluxerpp/models/EmbedVideo.h
+// Note Fluxer Does not yet support embeded videos this file is just a headstart
 //
 // Represents the <video> block inside an embed.
 // Fluxer/Discord embed videos support:

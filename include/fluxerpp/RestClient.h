@@ -30,6 +30,19 @@ public:
     // why the model API didn't compile. channel_id/message_id are snowflake
     // IDs (see util::parse_snowflake for the inverse direction).
     nlohmann::json send_message(std::uint64_t channel_id, const nlohmann::json& payload);
+    // Plain-text convenience overloads. A single std::string overload here
+    // is AMBIGUOUS for a string-literal argument like send_message(id,
+    // "hi") — both this and the json overload above require exactly one
+    // user-defined conversion (std::string's constructor vs. json's), and
+    // the compiler has no way to rank two unrelated user-defined
+    // conversions against each other. The const char* overload below fixes
+    // that: a literal decaying to const char* is an *exact-match*
+    // conversion (array-to-pointer decay), which strictly outranks a
+    // user-defined conversion, so it uniquely wins for literals. An actual
+    // std::string variable still binds directly to the overload below
+    // (also exact-match, no conflict with the json overload).
+    nlohmann::json send_message(std::uint64_t channel_id, const std::string& content);
+    nlohmann::json send_message(std::uint64_t channel_id, const char* content);
     nlohmann::json edit_message(std::uint64_t channel_id, std::uint64_t message_id, const nlohmann::json& payload);
     void delete_message(std::uint64_t channel_id, std::uint64_t message_id);
 
