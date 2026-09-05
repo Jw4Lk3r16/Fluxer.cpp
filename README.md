@@ -6,7 +6,7 @@ Fluxer++ is a young, in-progress SDK — this README describes what actually exi
 ---
 ## Quick links
 
-[Project Structure](#-project-structure) · [Installation](#-installation) · [Getting Started](#-getting-started) · [REST API Usage](#-rest-api-usage) · [Gateway & Events](#-gateway--events) · [Models](#-models) · [Logging](#-logging) · [Error Handling](#-error-handling) · [Bottlenecks](#-bottlenecks) · [Contributing](#-contributing) · [License](#-license)
+[Project Structure](#-project-structure) · [Installation](#-installation) · [Getting Started](#-getting-started) · [REST API Usage](#-rest-api-usage) · [Gateway & Events](#-gateway--events) · [Models](#-models) · [Logging](#-logging) · [Error Handling](#-error-handling) · [Bottlenecks](#-bottlenecks) · [Contributing](#-contributing) · [License](#-license) · [Installation](#-installation)
 
 ---
 
@@ -105,8 +105,19 @@ git clone https://github.com/Jw4Lk3r16/Fluxer.cpp
 ### 🧩 MSYS2 UCRT64 Package (recommended)
 Download the latest `.pkg.tar.zst` from the **Releases** tab and install it directly with **pacman**:
 
-```bash
-pacman -U https://github.com/Jw4Lk3r16/FluxerPP/releases/download/v0.1.0/mingw-w64-ucrt-x86_64-fluxerpp-0.1.0-1-any.pkg.tar.zst
+If you are not able to download it you can try one of these commands I recommend running them from downloads so they appear there and not in the abyss
+
+**wget**
+```
+wget  curl -LO https://github.com/Jw4Lk3r16/Fluxerpp/releases/download/Release/mingw-w64-ucrt-x86_64-fluxerpp
+```
+**curl**
+```
+curl -LO  curl -LO https://github.com/Jw4Lk3r16/Fluxerpp/releases/download/Release/mingw-w64-ucrt-x86_64-fluxerpp
+```
+**Install**
+```
+pacman -U --noconfirm mingw-w64-ucrt-x86_64-fluxerpp-0.1.0-1-any.pkg.tar.zst
 ```
 
 This automatically places Fluxer++ into your MSYS2 environment under:
@@ -119,16 +130,23 @@ This automatically places Fluxer++ into your MSYS2 environment under:
 ---
 
 ### 📦 Manual file installation (alternative)
-If you prefer manual setup, download the **Windows DLL package** (`fluxerpp-v0.1.0-windows-dll.zip`) from the release page and extract it anywhere.  
-Then copy the contents into your MSYS2 directories:
+If you prefer manual setup, download the **Windows DLL package** from the Release page and extract it anywhere:
 
 ```bash
-cp -r fluxerpp-v0.1.0-windows-dll/bin/fluxerpp.dll /ucrt64/bin/
-cp -r fluxerpp-v0.1.0-windows-dll/lib/libfluxerpp.dll.a /ucrt64/lib/
-cp -r fluxerpp-v0.1.0-windows-dll/include/fluxerpp /ucrt64/include/
+curl -LO https://github.com/Jw4Lk3r16/Fluxerpp/releases/download/Release/mingw-w64-ucrt-x86_64-fluxerpp
 ```
 
-This achieves the same result as the pacman method but gives you manual control over placement.
+After extracting the archive, copy the contents into your MSYS2 UCRT64 directories:
+
+```bash
+cp fluxerpp.dll /ucrt64/bin/
+cp libfluxerpp.dll.a /ucrt64/lib/
+cp -r include/fluxerpp /ucrt64/include/
+```
+
+This installs Fluxer++ locally without requiring pacman signatures and produces the same environment as the package install.
+
+---
 
 ### Build with CMake
 ```
