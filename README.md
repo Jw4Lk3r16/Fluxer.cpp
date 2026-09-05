@@ -93,12 +93,42 @@ fluxerpp/
 ---
 
 ## 🔧 Installation
-Fluxer++ currently builds on **UCRT64** (MSYS2) with **libcurl** and **WinHTTP**. Precompiled binaries aren't available yet.
+Fluxer++ currently builds on **UCRT64** (MSYS2) with **libcurl** and **WinHTTP**. Precompiled binaries are now available for Windows.
 
 ### Clone the repository
-```
+```bash
 git clone https://github.com/Jw4Lk3r16/Fluxer.cpp
 ```
+
+---
+
+### 🧩 MSYS2 UCRT64 Package (recommended)
+Download the latest `.pkg.tar.zst` from the **Releases** tab and install it directly with **pacman**:
+
+```bash
+pacman -U https://github.com/Jw4Lk3r16/FluxerPP/releases/download/v0.1.0/mingw-w64-ucrt-x86_64-fluxerpp-0.1.0-1-any.pkg.tar.zst
+```
+
+This automatically places Fluxer++ into your MSYS2 environment under:
+```
+/ucrt64/bin/fluxerpp.dll
+/ucrt64/lib/libfluxerpp.dll.a
+/ucrt64/include/fluxerpp/
+```
+
+---
+
+### 📦 Manual file installation (alternative)
+If you prefer manual setup, download the **Windows DLL package** (`fluxerpp-v0.1.0-windows-dll.zip`) from the release page and extract it anywhere.  
+Then copy the contents into your MSYS2 directories:
+
+```bash
+cp -r fluxerpp-v0.1.0-windows-dll/bin/fluxerpp.dll /ucrt64/bin/
+cp -r fluxerpp-v0.1.0-windows-dll/lib/libfluxerpp.dll.a /ucrt64/lib/
+cp -r fluxerpp-v0.1.0-windows-dll/include/fluxerpp /ucrt64/include/
+```
+
+This achieves the same result as the pacman method but gives you manual control over placement.
 
 ### Build with CMake
 ```

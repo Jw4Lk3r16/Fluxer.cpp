@@ -1,65 +1,87 @@
 cmake_minimum_required(VERSION 3.20)
-project(FluxerPP LANGUAGES CXX)
+project(FluxerPP VERSION 0.1.0 LANGUAGES CXX)
+
+option(FLUXERPP_BUILD_SHARED "Build Fluxer++ as a shared library" ON)
+option(FLUXERPP_BUILD_STATIC "Build Fluxer++ as a static library" ON)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Resolved through CMake's own find machinery instead of hoping a bare
-# "curl" on the linker search path happens to be a compatible libcurl.
-# CURL::libcurl also carries its own include dirs, so nothing extra is
-# needed for <curl/curl.h> anywhere in the codebase.
+include(GNUInstallDirs)
+
+# Dependencies
 find_package(CURL REQUIRED)
 
 # Fluxer++ library
-add_library(fluxerpp
-    src/FluxerClient.cpp
-    src/RestClient.cpp
-    src/GatewayClient.cpp
-    src/EventDispatcher.cpp
-    src/models/Message.cpp
-    src/models/User.cpp
-    src/models/Attachment.cpp
-    src/models/Embed.cpp
-    src/models/EmbedAuthor.cpp
-    src/models/EmbedField.cpp
-    src/models/EmbedFooter.cpp
-    src/models/EmbedImage.cpp
-    src/models/EmbedThumbnail.cpp
-    src/models/EmbedVideo.cpp
-    src/models/Reaction.cpp
-    src/models/File.cpp
-    src/models/Channel.cpp
-    src/models/Role.cpp
-    src/models/Member.cpp
-    src/models/Guild.cpp
-    # NOTE: src/winhttp_send.cpp removed — it was a standalone WinHTTP
-    # sender duplicating what RestClient already does via libcurl, and
-    # nothing in the codebase called into it. Safe to delete from disk;
-    # nothing here references it anymore.
-)
+if(FLUXERPP_BUILD_SHARED)
+    add_library(fluxerpp SHARED
+        src/FluxerClient.cpp
+        src/RestClient.cpp
+        src/GatewayClient.cpp
+        src/EventDispatcher.cpp
+        src/models/Message.cpp
+        src/models/User.cpp
+        src/models/Attachment.cpp
+        src/models/Embed.cpp
+        src/models/EmbedAuthor.cpp
+        src/models/EmbedField.cpp
+        src/models/EmbedFooter.cpp
+        src/models/EmbedImage.cpp
+        src/models/EmbedThumbnail.cpp
+        src/models/EmbedVideo.cpp
+        src/models/Reaction.cpp
+        src/models/File.cpp
+        src/models/Channel.cpp
+        src/models/Role.cpp
+        src/models/Member.cpp
+        src/models/Guild.cpp
+    )
+endif()
 
-# PUBLIC + generator-expression include dirs, not include_directories().
-# include_directories() only affects targets defined in *this* directory
-# scope and doesn't attach to the fluxerpp target itself — a project doing
-# add_subdirectory(Fluxer.cpp) would not inherit this include path at all,
-# and inside this file CMAKE_SOURCE_DIR would resolve to the *parent*
-# project's source dir once included that way, not this repo's. Every
-# in-repo target below (ping_bot, the smoke test) now gets its include path
-# purely through linking against the fluxerpp target, the same way an
-# external consumer would — nothing here hand-adds include/ anywhere else.
+# if(FLUXERPP_BUILD_STATIC)
+#     add_library(fluxerpp_static STATIC
+#         ${CMAKE_CURRENT_SOURCE_DIR}/src/FluxerClient.cpp
+#         ${CMAKE_CURRENT_SOURCE_DIR}/src/RestClient.cpp
+#         ${CMAKE_CURRENT_SOURCE_DIR}/src/GatewayClient.cpp
+#         ${CMAKE_CURRENT_SOURCE_DIR}/src/EventDispatcher.cpp
+#         ${CMAKE_CURRENT_SOURCE_DIR}/src/models/Message.cpp
+#         ${CMAKE_CURRENT_SOURCE_DIR}/src/models/User.cpp
+#         ${CMAKE_CURRENT_SOURCE_DIR}/src/models/Attachment.cpp
+#         ${CMAKE_CURRENT_SOURCE_DIR}/src/models/Embed.cpp
+#         ${CMAKE_CURRENT_SOURCE_DIR}/src/models/EmbedAuthor.cpp
+#         ${CMAKE_CURRENT_SOURCE_DIR}/src/models/EmbedField.cpp
+#         ${CMAKE_CURRENT_SOURCE_DIR}/src/models/EmbedFooter.cpp
+#         ${CMAKE_CURRENT_SOURCE_DIR}/src/models/EmbedImage.cpp
+#         ${CMAKE_CURRENT_SOURCE_DIR}/src/models/EmbedThumbnail.cpp
+#         ${CMAKE_CURRENT_SOURCE_DIR}/src/models/EmbedVideo.cpp
+#         ${CMAKE_CURRENT_SOURCE_DIR}/src/models/Reaction.cpp
+#         ${CMAKE_CURRENT_SOURCE_DIR}/src/models/File.cpp
+#         ${CMAKE_CURRENT_SOURCE_DIR}/src/models/Channel.cpp
+#         ${CMAKE_CURRENT_SOURCE_DIR}/src/models/Role.cpp
+#         ${CMAKE_CURRENT_SOURCE_DIR}/src/models/Member.cpp
+#         ${CMAKE_CURRENT_SOURCE_DIR}/src/models/Guild.cpp
+#     )
+# endif()
+
 target_include_directories(fluxerpp
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
 )
 
+# target_include_directories(fluxerpp_static
+#     PUBLIC
+#         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+#         $<INSTALL_INTERFACE:include>
+# )
+
 if(WIN32)
     target_link_libraries(fluxerpp PUBLIC winhttp ws2_32)
 endif()
+
 target_link_libraries(fluxerpp PUBLIC CURL::libcurl)
 
-# ping_bot example — builds purely against the fluxerpp target's public
-# interface, same as any external consumer would.
+# Example bot
 add_executable(ping_bot examples/ping_bot.cpp)
 target_link_libraries(ping_bot PRIVATE fluxerpp)
 
@@ -67,15 +89,60 @@ if(WIN32)
     set_target_properties(ping_bot PROPERTIES LINK_FLAGS "-Wl,-subsystem,console")
 endif()
 
-# --- Consumer smoke test -------------------------------------------------
-# Not a full separate-repo add_subdirectory test (that needs its own git
-# checkout to exercise the add_subdirectory path properly), but it does
-# prove the fluxerpp *target* — target_link_libraries + the
-# target_include_directories above — actually works for a translation unit
-# that isn't part of this library, with every public header as the first
-# include. See tests/consumer_smoke_test.cpp.
+# Optional smoke test
 option(FLUXERPP_BUILD_TESTS "Build the fluxerpp consumer smoke test" ON)
 if(FLUXERPP_BUILD_TESTS)
     add_executable(fluxerpp_consumer_smoke_test tests/consumer_smoke_test.cpp)
     target_link_libraries(fluxerpp_consumer_smoke_test PRIVATE fluxerpp)
 endif()
+
+# -----------------------------
+# INSTALL RULES (MSYS2 + CMake)
+# -----------------------------
+
+# Install library (DLL, import lib, static lib)
+install(
+    TARGETS fluxerpp
+    EXPORT Fluxer++Targets
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}     # fluxerpp.dll
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}     # libfluxerpp.dll.a
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}     # libfluxerpp.a
+)
+
+# Install headers
+install(
+    DIRECTORY include/fluxerpp/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/fluxerpp
+)
+
+# Export CMake targets
+install(
+    EXPORT Fluxer++Targets
+    FILE Fluxer++Targets.cmake
+    NAMESPACE Fluxer++::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/Fluxer++
+)
+
+# Generate version file
+include(CMakePackageConfigHelpers)
+
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/Fluxer++ConfigVersion.cmake"
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMajorVersion
+)
+
+# Configure main config file
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Fluxer++Config.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/Fluxer++Config.cmake"
+    @ONLY
+)
+
+# Install config + version files
+install(
+    FILES
+        "${CMAKE_CURRENT_BINARY_DIR}/Fluxer++Config.cmake"
+        "${CMAKE_CURRENT_BINARY_DIR}/Fluxer++ConfigVersion.cmake"
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/Fluxer++
+)
